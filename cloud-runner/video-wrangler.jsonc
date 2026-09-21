@@ -1,0 +1,11 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "video-primary-article-studio",
+  "main": "src/full.ts",
+  "compatibility_date": "2026-09-21",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "assets": { "directory": "../dist/client", "binding": "ASSETS" },
+  "d1_databases": [{ "binding": "DB", "database_name": "video-primary-article-db", "database_id": "91eb7e46-0db4-4304-b5d2-ee0a9fc236e0", "migrations_dir": "../migrations" }],
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "video-primary-article-files" }]
+}
