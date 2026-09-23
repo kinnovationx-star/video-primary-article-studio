@@ -5,6 +5,7 @@ import { UbersuggestMcpClient } from "../cloud-runner/src/ubersuggest-mcp";
 type JsonObject = Record<string, unknown>;
 type OAuthTokens = { access_token?: string; refresh_token?: string; expires_in?: number; scope?: string; token_type?: string; expiresAt?: number };
 type GoogleCredentials = { clientId: string; clientSecret: string; redirectUri: string };
+type GoogleResource = { id: string; label: string; detail?: string };
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -76,7 +77,21 @@ async function loadCredential<T>(provider: string): Promise<{ value: T; expiresA
 
 async function setProfile(provider: string, status: string, config: JsonObject, checkedAt: string | null) {
   const existing = await runtime().DB.prepare("SELECT public_config FROM integration_profiles WHERE provider=?").bind(provider).first<{ public_config: string }>();
-  const merged = { ...parse(existing?.public_config || "{}", {} as JsonObject), ...config };
+  const previous = parse(existing?.public_config || "{}", {} as JsonObject);
+  const merged = { ...previous, ...config };
+  if (Array.isArray(config.resources)) {
+    const resources = config.resources.filter((item): item is GoogleResource => Boolean(item && typeof item === "object" && "id" in item && "label" in item));
+    const selected = resources.find(item => item.id === previous.selectedResourceId) || (resources.length === 1 ? resources[0] : undefined);
+    if (selected) {
+      merged.selectedResourceId = selected.id;
+      merged.selectedResourceLabel = selected.label;
+      merged.selectedResourceDetail = selected.detail || "";
+    } else {
+      delete merged.selectedResourceId;
+      delete merged.selectedResourceLabel;
+      delete merged.selectedResourceDetail;
+    }
+  }
   await runtime().DB.prepare("INSERT INTO integration_profiles (provider,public_config,status,checked_at,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(provider) DO UPDATE SET public_config=excluded.public_config,status=excluded.status,checked_at=excluded.checked_at,updated_at=excluded.updated_at")
     .bind(provider, JSON.stringify(merged), status, checkedAt, now()).run();
   return { provider, status, public_config: merged, checked_at: checkedAt };
@@ -201,17 +216,55 @@ async function googleAccessToken(request: Request) {
 
 export async function verifyGoogleIntegrations(request: Request, suppliedToken?: string) {
   const accessToken = suppliedToken || await googleAccessToken(request), headers = { Authorization: `Bearer ${accessToken}` };
-  const checks = [
-    { provider: "gsc", url: "https://www.googleapis.com/webmasters/v3/sites", describe: (data: JsonObject) => ({ resourceName: `${Array.isArray(data.siteEntry) ? data.siteEntry.length : 0}サイト`, sites: data.siteEntry || [] }) },
-    { provider: "ga4", url: "https://analyticsadmin.googleapis.com/v1beta/accountSummaries?pageSize=10", describe: (data: JsonObject) => ({ resourceName: `${Array.isArray(data.accountSummaries) ? data.accountSummaries.length : 0}アカウント`, accounts: data.accountSummaries || [] }) },
-    { provider: "drive", url: "https://www.googleapis.com/drive/v3/about?fields=user", describe: (data: JsonObject) => ({ resourceName: (data.user as JsonObject | undefined)?.displayName || "Google Drive", user: data.user || {} }) },
-    { provider: "youtube", url: "https://www.googleapis.com/youtube/v3/channels?part=id,snippet&mine=true", describe: (data: JsonObject) => ({ resourceName: ((data.items as JsonObject[] | undefined)?.[0]?.snippet as JsonObject | undefined)?.title || "YouTube", channels: data.items || [] }) },
-  ];
-  const results = await Promise.all(checks.map(async check => {
-    try { const data = await jsonRequest(check.url, { headers }); return await setProfile(check.provider, "CONFIGURED", check.describe(data), now()); }
-    catch (error) { return setProfile(check.provider, "CONNECTION_ERROR", { lastError: text(error instanceof Error ? error.message : error, 240) }, null); }
-  }));
-  return results;
+  const verify = async (provider: typeof googleProviders[number], load: () => Promise<JsonObject>) => {
+    try { return await setProfile(provider, "CONFIGURED", await load(), now()); }
+    catch (error) { return setProfile(provider, "CONNECTION_ERROR", { lastError: text(error instanceof Error ? error.message : error, 240) }, null); }
+  };
+  return Promise.all([
+    verify("gsc", async () => {
+      const data = await jsonRequest("https://www.googleapis.com/webmasters/v3/sites", { headers });
+      const sites = Array.isArray(data.siteEntry) ? data.siteEntry as JsonObject[] : [];
+      const resources = sites.map(site => ({ id: text(site.siteUrl, 500), label: text(site.siteUrl, 500), detail: text(site.permissionLevel, 120) })).filter(item => item.id);
+      return { resourceName: `${resources.length}サイト`, sites, resources };
+    }),
+    verify("ga4", async () => {
+      const data = await jsonRequest("https://analyticsadmin.googleapis.com/v1beta/accountSummaries?pageSize=200", { headers });
+      const accounts = Array.isArray(data.accountSummaries) ? data.accountSummaries as JsonObject[] : [];
+      const resources = accounts.flatMap(account => {
+        const properties = Array.isArray(account.propertySummaries) ? account.propertySummaries as JsonObject[] : [];
+        return properties.map(property => ({ id: text(property.property, 500), label: text(property.displayName || property.property, 500), detail: text(account.displayName || account.account, 500) })).filter(item => item.id);
+      });
+      return { resourceName: `${resources.length}プロパティ`, accounts, resources };
+    }),
+    verify("drive", async () => {
+      const [about, shared] = await Promise.all([
+        jsonRequest("https://www.googleapis.com/drive/v3/about?fields=user", { headers }),
+        jsonRequest("https://www.googleapis.com/drive/v3/drives?pageSize=100&fields=drives(id,name),nextPageToken", { headers }),
+      ]);
+      const user = (about.user && typeof about.user === "object" ? about.user : {}) as JsonObject;
+      const drives = Array.isArray(shared.drives) ? shared.drives as JsonObject[] : [];
+      const resources: GoogleResource[] = [{ id: "root", label: "マイドライブ", detail: text(user.emailAddress || user.displayName, 500) }, ...drives.map(drive => ({ id: text(drive.id, 500), label: text(drive.name || drive.id, 500), detail: "共有ドライブ" })).filter(item => item.id)];
+      return { resourceName: `${resources.length}ドライブ`, user, drives, resources };
+    }),
+    verify("youtube", async () => {
+      const data = await jsonRequest("https://www.googleapis.com/youtube/v3/channels?part=id,snippet&mine=true", { headers });
+      const channels = Array.isArray(data.items) ? data.items as JsonObject[] : [];
+      const resources = channels.map(channel => { const snippet = (channel.snippet && typeof channel.snippet === "object" ? channel.snippet : {}) as JsonObject; return { id: text(channel.id, 500), label: text(snippet.title || channel.id, 500), detail: "YouTubeチャンネル" }; }).filter(item => item.id);
+      return { resourceName: `${resources.length}チャンネル`, channels, resources };
+    }),
+  ]);
+}
+
+export async function selectGoogleResource(provider: string, body: JsonObject) {
+  if (!(googleProviders as readonly string[]).includes(provider)) throw new Error("Google連携の選択対象ではありません。");
+  const resourceId = text(body.resourceId, 500);
+  if (!resourceId) throw new Error("利用する対象を選択してください。");
+  const row = await runtime().DB.prepare("SELECT public_config,status,checked_at FROM integration_profiles WHERE provider=?").bind(provider).first<{ public_config: string; status: string; checked_at: string | null }>();
+  if (!row || row.status !== "CONFIGURED") throw new Error("先にGoogleアカウントを接続してください。");
+  const config = parse(row.public_config || "{}", {} as JsonObject), resources = Array.isArray(config.resources) ? config.resources as JsonObject[] : [];
+  const selected = resources.find(item => text(item.id, 500) === resourceId);
+  if (!selected) throw new Error("選択した対象が現在のGoogleアカウントに見つかりません。再取得してください。");
+  return setProfile(provider, "CONFIGURED", { selectedResourceId: resourceId, selectedResourceLabel: text(selected.label, 500), selectedResourceDetail: text(selected.detail, 500) }, row.checked_at || now());
 }
 
 export async function finishGoogleOAuth(request: Request) {
