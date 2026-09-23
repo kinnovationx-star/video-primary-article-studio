@@ -10,6 +10,7 @@ import {
 
 type Article = {
   id: string;
+  project_id?: string;
   title: string;
   title_tag?: string;
   slug?: string;
@@ -189,6 +190,7 @@ type ActionProgressController = {
   start: (label: string) => void;
   complete: (detail: string) => void;
   fail: (detail: string) => void;
+  hold: (detail: string) => void;
   pulse: (label: string) => void;
 };
 function useActionProgress(): ActionProgressController {
@@ -271,6 +273,14 @@ function useActionProgress(): ActionProgressController {
       status: "failed",
     }));
   };
+  const hold = (detail: string) => {
+    setProgress((current) => ({
+      label: activeLabel.current,
+      percent: Math.min(92, Math.max(1, current?.percent || 1)),
+      detail,
+      status: "running",
+    }));
+  };
   const pulse = (label: string) => {
     stopTimers();
     const version = ++actionVersion.current;
@@ -292,7 +302,7 @@ function useActionProgress(): ActionProgressController {
       dismissTimer.current = window.setTimeout(() => setProgress(null), 1800);
     }, 180);
   };
-  return { progress, start, complete, fail, pulse };
+  return { progress, start, complete, fail, hold, pulse };
 }
 
 function GenerationProgress({
@@ -379,20 +389,22 @@ export function SeoLoopApp() {
   }, []);
   const createProduction = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setBusy(true);
-    actionProgress.start("記事・SEO情報・画像を一括生成（WordPress下書き保存を含む）");
-    try {
-      const form = event.currentTarget,
-        body = Object.fromEntries(new FormData(form)),
-        category = form.elements.namedItem(
-          "wordpress_category_id",
-        ) as HTMLSelectElement | null;
-      body.wordpress_category_name =
-        category?.selectedOptions[0]?.dataset.label || "";
-      const requestedCount = Math.min(
+    const form = event.currentTarget,
+      body = Object.fromEntries(new FormData(form)),
+      category = form.elements.namedItem(
+        "wordpress_category_id",
+      ) as HTMLSelectElement | null,
+      requestedUrl = String(body.youtube_url || ""),
+      submittedAt = Date.now(),
+      requestedCount = Math.min(
         5,
         Math.max(1, Number(body.article_limit) || 1),
       );
+    body.wordpress_category_name =
+      category?.selectedOptions[0]?.dataset.label || "";
+    setBusy(true);
+    actionProgress.start("記事・SEO情報・画像を一括生成（WordPress下書き保存を含む）");
+    try {
       const data = await api<{
         production: {
           articles: Array<{
@@ -409,7 +421,7 @@ export function SeoLoopApp() {
           `${requestedCount}本中${data.production.articles.length}本しか完成していません。100%にはせず、記事カードも確定しません。`,
         );
       if (
-        Boolean(category) &&
+        Boolean(body.wordpress_category_id) &&
         data.production.articles.some(
           (article) => !article.wordpressPreviewUrl && !article.wordpressEditUrl,
         )
@@ -440,8 +452,89 @@ export function SeoLoopApp() {
       );
     } catch (error) {
       const message = errorText(error);
-      actionProgress.fail(message);
-      setNotice(message);
+      if (/Failed to fetch|NetworkError|Load failed|fetch failed/i.test(message)) {
+        actionProgress.hold(
+          "通信を自動再接続しています。Cloudflare側の記事生成は継続しています",
+        );
+        setNotice(
+          "通信が一時的に切れたため、完成状況を自動確認しています。この画面を閉じずにお待ちください。",
+        );
+        let recovered = false,
+          terminalFailure = false;
+        for (let attempt = 0; attempt < 90 && !recovered; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 5000));
+          try {
+            const base = await api<{
+                projects: Array<{
+                  id: string;
+                  youtube_url: string;
+                  article_limit: number;
+                  status: string;
+                  created_at: string;
+                }>;
+                articles: Article[];
+                integrations: Integration[];
+              }>("bootstrap"),
+              project = base.projects.find(
+                (item) =>
+                  item.youtube_url === requestedUrl &&
+                  Number(item.article_limit) === requestedCount &&
+                  Date.parse(item.created_at) >= submittedAt - 60_000,
+              ),
+              created = project
+                ? base.articles.filter(
+                    (article) => article.project_id === project.id,
+                  )
+                : [];
+            if (
+              project?.status === "COMPLETED" &&
+              created.length === requestedCount &&
+              created.every(
+                (article) =>
+                  !body.wordpress_category_id ||
+                  Boolean(
+                    article.wordpress_preview_url || article.wordpress_edit_url,
+                  ),
+              )
+            ) {
+              const board = await api<Dashboard>("dashboard");
+              setArticles(base.articles);
+              setIntegrations(base.integrations);
+              setDashboard(board);
+              setNotice(
+                `${requestedCount}本の記事・画像・WordPress下書きが完成しました。`,
+              );
+              actionProgress.complete(
+                `${requestedCount}本の記事生成・画像保存・WordPress下書きURL取得・記事カード反映がすべて完了しました`,
+              );
+              recovered = true;
+            } else if (project?.status === "FAILED") {
+              throw new Error(
+                "サーバー側の処理が完了しませんでした。入力内容を保持したまま、もう一度実行できます。",
+              );
+            } else {
+              actionProgress.hold(
+                `通信再接続中：${created.length}/${requestedCount}本の完成を確認しています`,
+              );
+            }
+          } catch (recoveryError) {
+            const recoveryMessage = errorText(recoveryError);
+            if (!/Failed to fetch|NetworkError|Load failed|fetch failed/i.test(recoveryMessage)) {
+              actionProgress.fail(recoveryMessage);
+              setNotice(recoveryMessage);
+              terminalFailure = true;
+              break;
+            }
+          }
+        }
+        if (!recovered && !terminalFailure)
+          setNotice(
+            "記事生成はバックグラウンドで継続しています。完成後に記事カードへ自動反映されます。",
+          );
+      } else {
+        actionProgress.fail(message);
+        setNotice(message);
+      }
     } finally {
       setBusy(false);
     }
@@ -1218,8 +1311,9 @@ function ArticleLibraryItem({
     }
   };
   const featuredSettings = imageSettings.featured || {
-      prompt: `記事「${draft.title}」の主題と主要論点を整理した全体構造図`,
-      alt: `${draft.title}の全体構造を整理した図解`,
+      prompt:
+        "YouTubeサムネイルの人物・日本語・構図をそのまま保持し、A TRUTH STORYとPART番号だけを追加",
+      alt: `${draft.title}｜A TRUTH STORYアイキャッチ`,
     },
     featuredImage =
       images.find((image) => image.kind === "featured")?.url ||
@@ -1287,7 +1381,7 @@ function ArticleLibraryItem({
                 />
               )}
               <details className="image-ai-settings">
-                <summary>記事全体の16:9図解を設定・AI再生成</summary>
+                <summary>YouTubeサムネイル型アイキャッチを設定・AI再生成</summary>
                 <label>
                   画像の指示
                   <textarea
@@ -1326,7 +1420,7 @@ function ArticleLibraryItem({
                 >
                   {busyAction === "image-featured"
                     ? "AI画像を生成中…"
-                    : "記事全体の図解をAIで再生成"}
+                    : "アイキャッチ画像をAIで再生成"}
                 </button>
               </details>
             </header>

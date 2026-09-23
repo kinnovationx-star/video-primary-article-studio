@@ -93,6 +93,9 @@ test("YouTube metadata, cast fields, and thumbnail-based PART covers are wired e
   assert.match(production, /i\.ytimg\.com\/vi/);
   assert.match(production, /v1\/images\/edits/);
   assert.match(production, /image\[\]/);
+  assert.match(production, /quality", "max"/);
+  assert.match(production, /図解、イラスト、アイコン/);
+  assert.match(production, /変更は2点だけ/);
   assert.match(production, /A TRUTH STORY/);
   assert.match(production, /PART \$\{source\.articleIndex \+ 1\}/);
   assert.match(migration, /youtube_description/);
@@ -117,4 +120,7 @@ test("article batches become visible only after every article, image, and WordPr
   assert.match(studio, /visibleCreated\.length !== requestedCount/);
   assert.match(studio, /WordPress下書きURLを開く/);
   assert.match(studio, /WordPress下書きURL取得・記事カード反映がすべて完了/);
+  assert.match(studio, /通信を自動再接続しています/);
+  assert.match(studio, /project_id === project\.id/);
+  assert.match(studio, /Date\.parse\(item\.created_at\) >= submittedAt - 60_000/);
 });

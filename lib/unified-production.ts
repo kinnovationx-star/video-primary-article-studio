@@ -813,7 +813,7 @@ async function createFeaturedImageBytes(
   form.append("model", IMAGE_MODEL);
   form.append(
     "prompt",
-    `アップロードされたYouTubeサムネイルを必ず元画像として使い、人物・被写体・番組の主要構図を保持したまま16:9の横長アイキャッチに整えてください。読みやすい余白または半透明の帯を設け、英語で正確に「A TRUTH STORY」${part ? `と「${part}」` : ""}だけを追加してください。「A TRUTH STORY」をカタカナや「A TRUE STORY」に変えないでください。記事タイトル「${articleTitle}」の内容に沿う落ち着いたSEOメディア向けデザインにし、元サムネイルにない人物・ロゴ・出来事を追加しないでください。`,
+    `これは新規生成ではなく、アップロードしたYouTubeサムネイルの最小編集です。元画像の写真、出演者全員の顔・表情・服装・姿勢、背景、色、照明、構図、トリミング、ロゴ、日本語の見出し、会社名、役職、氏名はすべて同じ位置のまま厳密に保持し、書き換えたり再構成したりしないでください。図解、イラスト、アイコン、新しい人物、新しい背景は絶対に追加しないでください。変更は2点だけです。1) 既存の英語表記を正確な大文字「A TRUTH STORY」にする。2) ${part ? `右上に元デザインと調和する小さなラベル「${part}」を追加する` : "PARTラベルは追加しない"}。「A TRUE STORY」、カタカナ、その他の英語は使わないでください。16:9の横長を維持し、記事「${articleTitle}」のアイキャッチとして元サムネイルとほぼ同一に見える結果にしてください。`,
   );
   form.append(
     "image[]",
@@ -822,7 +822,7 @@ async function createFeaturedImageBytes(
   );
   form.append("n", "1");
   form.append("size", IMAGE_SIZE);
-  form.append("quality", "high");
+  form.append("quality", "max");
   form.append("output_format", "png");
   const response = await fetch("https://api.openai.com/v1/images/edits", {
       method: "POST",
