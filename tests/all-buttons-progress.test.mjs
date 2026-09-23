@@ -17,9 +17,7 @@ test("every enabled button is covered by the shared percentage progress UI", () 
 
 test("all asynchronous button workflows use the shared progress controller", () => {
   const expectedLabels = [
-    "制作入力を保存",
-    "キーワード候補を生成",
-    "文章生成",
+    "記事・SEO情報・画像を一括生成",
     "全データ自動分析",
     "の接続確認",
     "の認証準備",

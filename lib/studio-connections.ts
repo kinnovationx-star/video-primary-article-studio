@@ -75,6 +75,27 @@ async function loadCredential<T>(provider: string): Promise<{ value: T; expiresA
   return { value: await unseal<T>(row.secret_cipher), expiresAt: row.expires_at || null, scopes: parse(row.scopes_json || "[]", []) };
 }
 
+export async function getAnthropicApiKey() {
+  const saved = await loadCredential<{ apiKey?: string }>("anthropic");
+  return saved?.value.apiKey || runtime().ANTHROPIC_API_KEY || "";
+}
+
+export async function getOpenAiApiKey() {
+  const saved = await loadCredential<{ apiKey?: string }>("openai");
+  return saved?.value.apiKey || runtime().OPENAI_API_KEY || "";
+}
+
+export async function getWordPressConnection() {
+  const saved = await loadCredential<{ applicationPassword?: string }>("wordpress");
+  const row = await runtime().DB.prepare("SELECT public_config,status FROM integration_profiles WHERE provider='wordpress'").first<{ public_config: string; status: string }>();
+  const config = parse(row?.public_config || "{}", {} as JsonObject);
+  const siteUrl = text(config.siteUrl || runtime().WORDPRESS_URL, 500);
+  const username = text(config.username || runtime().WORDPRESS_USERNAME, 300);
+  const applicationPassword = saved?.value.applicationPassword || runtime().WORDPRESS_APPLICATION_PASSWORD || "";
+  if (row?.status !== "CONFIGURED" || !siteUrl || !username || !applicationPassword) return null;
+  return { siteUrl, username, applicationPassword, authMode: text(config.authMode, 30) || "rest" };
+}
+
 async function setProfile(provider: string, status: string, config: JsonObject, checkedAt: string | null) {
   const existing = await runtime().DB.prepare("SELECT public_config FROM integration_profiles WHERE provider=?").bind(provider).first<{ public_config: string }>();
   const previous = parse(existing?.public_config || "{}", {} as JsonObject);
