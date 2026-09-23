@@ -274,6 +274,7 @@ function useActionProgress(): ActionProgressController {
     }));
   };
   const hold = (detail: string) => {
+    stopTimers();
     setProgress((current) => ({
       label: activeLabel.current,
       percent: Math.min(92, Math.max(1, current?.percent || 1)),
