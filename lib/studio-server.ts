@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 
-export type Env = { DB: D1Database; FILES: R2Bucket; ANTHROPIC_API_KEY?: string; OPENAI_API_KEY?: string; DATA_ENCRYPTION_KEY?: string; WORDPRESS_URL?: string; WORDPRESS_USERNAME?: string; WORDPRESS_APPLICATION_PASSWORD?: string; UBERSUGGEST_API_URL?: string; UBERSUGGEST_ACCESS_TOKEN?: string };
-export const runtime = () => env as unknown as Env;
+export type Env = Cloudflare.Env;
+export const runtime = () => env;
 export const id = () => crypto.randomUUID();
 export const now = () => new Date().toISOString();
 export const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
