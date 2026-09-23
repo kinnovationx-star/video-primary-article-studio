@@ -108,6 +108,19 @@ const slugify = (value: string) =>
 const clamp = (value: unknown, fallback: number) =>
   Math.min(5, Math.max(1, Number(value) || fallback));
 
+async function retry<T>(operation: () => Promise<T>, attempts = 2) {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++)
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts)
+        await new Promise((resolve) => setTimeout(resolve, attempt * 800));
+    }
+  throw lastError;
+}
+
 function jsonFromText(value: string) {
   const cleaned = value
     .replace(/^```(?:json)?\s*/i, "")
@@ -1099,6 +1112,10 @@ export async function createUnifiedProduction(
   const model = await anthropicModel(anthropicKey),
     openAiKey = await getOpenAiApiKey(),
     wordpress = await getWordPressConnection();
+  if (!openAiKey)
+    throw new Error(
+      "アイキャッチ画像・H2図解の生成に必要なOpenAI GPT Imageを連携設定で接続してください。",
+    );
   if (wordpress && !categoryId)
     throw new Error("WordPressの投稿カテゴリーを選択してください。");
   await runtime()
@@ -1135,211 +1152,227 @@ export async function createUnifiedProduction(
       title: string;
       wordpressStatus: string;
       imageCount: number;
+      wordpressPreviewUrl: string;
+      wordpressEditUrl: string;
     }> = [],
     warnings: string[] = [];
-  for (let index = 0; index < articleCount; index++) {
-    const generated = await generateArticle(
-        anthropicKey,
-        model,
-        {
-          title,
-          url,
-          description: metadata.description,
-          chapters: metadata.chapters,
-          transcript,
-          direction,
-          keywords: keywords.keywords,
-          provider: keywords.provider,
-          challengerCompany,
-          challengerRole,
-          challengerName,
-          specialGuest,
-          mcName,
-        },
-        index,
-      ),
-      articleId = id(),
-      candidateId = id();
-    await runtime()
-      .DB.prepare(
-        "INSERT INTO keyword_candidates (id,project_id,keyword,related_keywords,search_intent,reader,angle,relevance,duplication_risk,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-      )
-      .bind(
-        candidateId,
-        projectId,
-        generated.mainKeyword,
-        JSON.stringify(generated.relatedKeywords),
-        generated.searchIntent,
-        generated.reader,
-        generated.angle,
-        keywords.provider,
-        "low",
-        "CREATED",
-        stamp,
-      )
-      .run();
-    const initialHtml = bodyHtml(generated, []),
-      evidence = JSON.stringify([
-        {
-          source: url,
-          title,
-          videoId: metadata.videoId,
-          descriptionCharacters: metadata.description.length,
-          chapters: metadata.chapters.split(/\r?\n/).filter(Boolean).length,
-          transcriptCharacters: transcript.length,
-          challenger: {
-            company: challengerCompany,
-            role: challengerRole,
-            name: challengerName,
-          },
-          specialGuest,
-          mc: mcName,
-        },
-      ]);
-    await runtime()
-      .DB.prepare(
-        "INSERT INTO articles (id,project_id,candidate_id,title,title_tag,meta_description,slug,catch_copy,main_keyword,related_keywords,search_intent,reader,angle,category_id,category_name,body_html,evidence_json,image_suggestions_json,quality_json,status,wordpress_status,featured_image_url,section_images_json,generation_provider,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-      )
-      .bind(
-        articleId,
-        projectId,
-        candidateId,
-        generated.title,
-        generated.titleTag,
-        generated.metaDescription,
-        generated.slug,
-        generated.catchCopy,
-        generated.mainKeyword,
-        JSON.stringify(generated.relatedKeywords),
-        generated.searchIntent,
-        generated.reader,
-        generated.angle,
-        categoryId,
-        categoryName,
-        initialHtml,
-        evidence,
-        JSON.stringify(
-          generated.sections.map((section) => ({
-            heading: section.heading,
-            prompt: section.imagePrompt,
-            alt: section.altText,
-          })),
-        ),
-        JSON.stringify({
-          evidence: "PASS",
-          fabricationRisk: "LOW",
-          source: "video_transcript",
-        }),
-        "REVIEW_READY",
-        "NOT_SENT",
-        "",
-        "[]",
-        `${model} / ${keywords.provider}`,
-        stamp,
-        stamp,
-      )
-      .run();
-    let imageResult: Awaited<ReturnType<typeof generateImages>> = {
-      images: [],
-      warning: "",
-    };
-    try {
-      imageResult = await generateImages(
-        openAiKey,
-        articleId,
-        generated,
-        imageCount,
-        {
-          thumbnailUrl: metadata.thumbnailUrl,
-          videoId: metadata.videoId,
-          articleIndex: index,
-          articleCount,
-        },
-      );
-      if (imageResult.warning) warnings.push(imageResult.warning);
-    } catch (error) {
-      warnings.push(
-        `「${generated.title}」の画像生成: ${error instanceof Error ? error.message : "失敗"}`,
-      );
-    }
-    let wordpressStatus = "NOT_SENT",
-      finalHtml = bodyHtml(
-        generated,
-        imageResult.images.map((image) => image.url),
-      );
-    if (wordpress)
-      try {
-        const posted = await publishDraft(
-          wordpress,
-          generated,
-          finalHtml,
-          categoryId,
-          imageResult.images,
-        );
-        wordpressStatus = "DRAFT";
-        finalHtml = posted.html;
+  try {
+    const completed = await Promise.all(
+      Array.from({ length: articleCount }, async (_, index) => {
+        const generated = await retry(
+            () =>
+              generateArticle(
+                anthropicKey,
+                model,
+                {
+                  title,
+                  url,
+                  description: metadata.description,
+                  chapters: metadata.chapters,
+                  transcript,
+                  direction,
+                  keywords: keywords.keywords,
+                  provider: keywords.provider,
+                  challengerCompany,
+                  challengerRole,
+                  challengerName,
+                  specialGuest,
+                  mcName,
+                },
+                index,
+              ),
+            2,
+          ),
+          articleId = id(),
+          candidateId = id();
         await runtime()
           .DB.prepare(
-            "UPDATE articles SET body_html=?,featured_image_url=?,section_images_json=?,wordpress_post_id=?,wordpress_edit_url=?,wordpress_preview_url=?,wordpress_status=?,updated_at=? WHERE id=?",
+            "INSERT INTO keyword_candidates (id,project_id,keyword,related_keywords,search_intent,reader,angle,relevance,duplication_risk,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
           )
           .bind(
-            finalHtml,
-            posted.featuredUrl,
-            JSON.stringify(posted.uploadedUrls.slice(1)),
-            posted.postId,
-            posted.editUrl,
-            posted.previewUrl,
-            wordpressStatus,
-            now(),
-            articleId,
+            candidateId,
+            projectId,
+            generated.mainKeyword,
+            JSON.stringify(generated.relatedKeywords),
+            generated.searchIntent,
+            generated.reader,
+            generated.angle,
+            keywords.provider,
+            "low",
+            "CREATED",
+            stamp,
           )
           .run();
-      } catch (error) {
-        wordpressStatus = "ERROR";
-        warnings.push(
-          `「${generated.title}」のWordPress下書き: ${error instanceof Error ? error.message : "失敗"}`,
-        );
+        const initialHtml = bodyHtml(generated, []),
+          evidence = JSON.stringify([
+            {
+              source: url,
+              title,
+              videoId: metadata.videoId,
+              descriptionCharacters: metadata.description.length,
+              chapters: metadata.chapters.split(/\r?\n/).filter(Boolean)
+                .length,
+              transcriptCharacters: transcript.length,
+              challenger: {
+                company: challengerCompany,
+                role: challengerRole,
+                name: challengerName,
+              },
+              specialGuest,
+              mc: mcName,
+            },
+          ]);
         await runtime()
           .DB.prepare(
-            "UPDATE articles SET body_html=?,section_images_json=?,wordpress_status=?,updated_at=? WHERE id=?",
+            "INSERT INTO articles (id,project_id,candidate_id,title,title_tag,meta_description,slug,catch_copy,main_keyword,related_keywords,search_intent,reader,angle,category_id,category_name,body_html,evidence_json,image_suggestions_json,quality_json,status,wordpress_status,featured_image_url,section_images_json,generation_provider,batch_ready,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
           )
           .bind(
-            finalHtml,
+            articleId,
+            projectId,
+            candidateId,
+            generated.title,
+            generated.titleTag,
+            generated.metaDescription,
+            generated.slug,
+            generated.catchCopy,
+            generated.mainKeyword,
+            JSON.stringify(generated.relatedKeywords),
+            generated.searchIntent,
+            generated.reader,
+            generated.angle,
+            categoryId,
+            categoryName,
+            initialHtml,
+            evidence,
             JSON.stringify(
-              imageResult.images.slice(1).map((image) => image.url),
+              generated.sections.map((section) => ({
+                heading: section.heading,
+                prompt: section.imagePrompt,
+                alt: section.altText,
+              })),
             ),
-            wordpressStatus,
-            now(),
-            articleId,
+            JSON.stringify({
+              evidence: "PASS",
+              fabricationRisk: "LOW",
+              source: "video_transcript",
+            }),
+            "REVIEW_READY",
+            "NOT_SENT",
+            "",
+            "[]",
+            `${model} / ${keywords.provider}`,
+            0,
+            stamp,
+            stamp,
           )
           .run();
-      }
-    else
-      await runtime()
+        const imageResult = await retry(
+          () =>
+            generateImages(openAiKey, articleId, generated, imageCount, {
+              thumbnailUrl: metadata.thumbnailUrl,
+              videoId: metadata.videoId,
+              articleIndex: index,
+              articleCount,
+            }),
+          2,
+        );
+        if (imageResult.warning) throw new Error(imageResult.warning);
+        if (imageResult.images.length !== imageCount)
+          throw new Error(
+            `画像が${imageResult.images.length}/${imageCount}枚しか生成されませんでした。`,
+          );
+        let wordpressStatus = "NOT_SENT",
+          wordpressPreviewUrl = "",
+          wordpressEditUrl = "",
+          finalHtml = bodyHtml(
+            generated,
+            imageResult.images.map((image) => image.url),
+          );
+        if (wordpress) {
+          const posted = await retry(
+            () =>
+              publishDraft(
+                wordpress,
+                generated,
+                finalHtml,
+                categoryId,
+                imageResult.images,
+              ),
+            2,
+          );
+          if (!posted.previewUrl)
+            throw new Error(
+              `「${generated.title}」のWordPress下書きURLを取得できませんでした。`,
+            );
+          wordpressStatus = "DRAFT";
+          wordpressPreviewUrl = posted.previewUrl;
+          wordpressEditUrl = posted.editUrl;
+          finalHtml = posted.html;
+          await runtime()
+            .DB.prepare(
+              "UPDATE articles SET body_html=?,featured_image_url=?,section_images_json=?,wordpress_post_id=?,wordpress_edit_url=?,wordpress_preview_url=?,wordpress_status=?,updated_at=? WHERE id=?",
+            )
+            .bind(
+              finalHtml,
+              posted.featuredUrl,
+              JSON.stringify(posted.uploadedUrls.slice(1)),
+              posted.postId,
+              posted.editUrl,
+              posted.previewUrl,
+              wordpressStatus,
+              now(),
+              articleId,
+            )
+            .run();
+        } else
+          await runtime()
+            .DB.prepare(
+              "UPDATE articles SET body_html=?,featured_image_url=?,section_images_json=?,updated_at=? WHERE id=?",
+            )
+            .bind(
+              finalHtml,
+              imageResult.images[0]?.url || "",
+              JSON.stringify(
+                imageResult.images.slice(1).map((image) => image.url),
+              ),
+              now(),
+              articleId,
+            )
+            .run();
+        return {
+          id: articleId,
+          title: generated.title,
+          wordpressStatus,
+          imageCount: imageResult.images.length,
+          wordpressPreviewUrl,
+          wordpressEditUrl,
+        };
+      }),
+    );
+    if (completed.length !== articleCount)
+      throw new Error(
+        `${articleCount}本中${completed.length}本しか完成しませんでした。`,
+      );
+    results.push(...completed);
+    await runtime().DB.batch([
+      runtime()
+        .DB.prepare("UPDATE articles SET batch_ready=1 WHERE project_id=?")
+        .bind(projectId),
+      runtime()
         .DB.prepare(
-          "UPDATE articles SET body_html=?,featured_image_url=?,section_images_json=?,updated_at=? WHERE id=?",
+          "UPDATE production_projects SET status='COMPLETED',updated_at=? WHERE id=?",
         )
-        .bind(
-          finalHtml,
-          imageResult.images[0]?.url || "",
-          JSON.stringify(imageResult.images.slice(1).map((image) => image.url)),
-          now(),
-          articleId,
-        )
-        .run();
-    results.push({
-      id: articleId,
-      title: generated.title,
-      wordpressStatus,
-      imageCount: imageResult.images.length,
-    });
+        .bind(now(), projectId),
+    ]);
+  } catch (error) {
+    await runtime()
+      .DB.prepare(
+        "UPDATE production_projects SET status='FAILED',updated_at=? WHERE id=?",
+      )
+      .bind(now(), projectId)
+      .run();
+    throw error;
   }
-  await runtime()
-    .DB.prepare(
-      "UPDATE production_projects SET status='COMPLETED',updated_at=? WHERE id=?",
-    )
-    .bind(now(), projectId)
-    .run();
   return {
     projectId,
     articles: results,

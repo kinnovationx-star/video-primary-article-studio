@@ -389,14 +389,54 @@ export function SeoLoopApp() {
         ) as HTMLSelectElement | null;
       body.wordpress_category_name =
         category?.selectedOptions[0]?.dataset.label || "";
+      const requestedCount = Math.min(
+        5,
+        Math.max(1, Number(body.article_limit) || 1),
+      );
       const data = await api<{
-        production: { articles: Array<{ id: string }>; warnings: string[] };
+        production: {
+          articles: Array<{
+            id: string;
+            wordpressPreviewUrl: string;
+            wordpressEditUrl: string;
+          }>;
+          warnings: string[];
+        };
         notice: string;
       }>("productions", "POST", body);
+      if (data.production.articles.length !== requestedCount)
+        throw new Error(
+          `${requestedCount}本中${data.production.articles.length}本しか完成していません。100%にはせず、記事カードも確定しません。`,
+        );
+      if (
+        Boolean(category) &&
+        data.production.articles.some(
+          (article) => !article.wordpressPreviewUrl && !article.wordpressEditUrl,
+        )
+      )
+        throw new Error(
+          "WordPress下書きURLを確認できない記事があります。100%にはせず、記事カードも確定しません。",
+        );
+      const [base, board] = await Promise.all([
+        api<{ articles: Article[]; integrations: Integration[] }>("bootstrap"),
+        api<Dashboard>("dashboard"),
+      ]);
+      const createdIds = new Set(
+          data.production.articles.map((article) => article.id),
+        ),
+        visibleCreated = base.articles.filter((article) =>
+          createdIds.has(article.id),
+        );
+      if (visibleCreated.length !== requestedCount)
+        throw new Error(
+          "完成記事を記事ライブラリーへ反映できませんでした。100%にはせず、再読込を待ちます。",
+        );
+      setArticles(base.articles);
+      setIntegrations(base.integrations);
+      setDashboard(board);
       setNotice(data.notice);
-      await load();
       actionProgress.complete(
-        `${data.production.articles.length}本の記事生成・画像保存・WordPress下書き作成が完了しました`,
+        `${requestedCount}本の記事生成・画像保存・WordPress下書きURL取得・記事カード反映がすべて完了しました`,
       );
     } catch (error) {
       const message = errorText(error);
@@ -1211,6 +1251,16 @@ function ArticleLibraryItem({
         <small>
           最終更新: {new Date(item.updated_at).toLocaleString("ja-JP")}
         </small>
+        {wordpressPreviewUrl && (
+          <a
+            className="wordpress-card-link"
+            href={wordpressPreviewUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            WordPress下書きURLを開く
+          </a>
+        )}
       </div>
       {open && (
         <div className="article-visual-editor">

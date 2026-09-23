@@ -151,7 +151,7 @@ async function dashboard() {
         "SELECT id,status,updated_at FROM production_projects ORDER BY updated_at DESC",
       ),
       rows(
-        "SELECT id,status,wordpress_status,updated_at FROM articles ORDER BY updated_at DESC",
+        "SELECT id,status,wordpress_status,updated_at FROM articles WHERE batch_ready=1 ORDER BY updated_at DESC",
       ),
       rows("SELECT id,status FROM keyword_candidates"),
       profiles(),
@@ -267,7 +267,9 @@ export async function GET(request: Request, context: Context) {
       const [projects, articles, files, workspaceData, integrations] =
         await Promise.all([
           rows("SELECT * FROM production_projects ORDER BY updated_at DESC"),
-          rows("SELECT * FROM articles ORDER BY updated_at DESC"),
+          rows(
+            "SELECT * FROM articles WHERE batch_ready=1 ORDER BY updated_at DESC",
+          ),
           rows("SELECT * FROM uploaded_files ORDER BY created_at DESC"),
           workspace(),
           profiles(),

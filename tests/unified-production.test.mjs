@@ -16,7 +16,7 @@ test("studio exposes one unified production submit button", async () => {
 
 test("unified production persists exact controls and media metadata", async () => {
   const source = await readFile(new URL("lib/unified-production.ts", root), "utf8");
-  assert.match(source, /for \(let index = 0; index < articleCount; index\+\+\)/);
+  assert.match(source, /Array\.from\(\{ length: articleCount \}/);
   assert.match(source, /featured_media/);
   assert.match(source, /status: "draft"/);
   assert.match(source, /metaDescription/);
@@ -98,4 +98,21 @@ test("YouTube metadata, cast fields, and thumbnail-based PART covers are wired e
   assert.match(migration, /youtube_description/);
   assert.match(migration, /youtube_chapters/);
   assert.match(migration, /challenger_role/);
+});
+
+test("article batches become visible only after every article, image, and WordPress URL is complete", async () => {
+  const studio = await readFile(new URL("app/seo-loop-app.tsx", root), "utf8");
+  const production = await readFile(new URL("lib/unified-production.ts", root), "utf8");
+  const route = await readFile(new URL("app/api/[[...path]]/route.ts", root), "utf8");
+  const migration = await readFile(new URL("migrations/0009_atomic_article_batches.sql", root), "utf8");
+
+  assert.match(production, /Promise\.all\(/);
+  assert.match(production, /imageResult\.images\.length !== imageCount/);
+  assert.match(production, /WordPress下書きURLを取得できませんでした/);
+  assert.match(production, /UPDATE articles SET batch_ready=1 WHERE project_id=/);
+  assert.match(route, /WHERE batch_ready=1 ORDER BY updated_at DESC/);
+  assert.match(migration, /batch_ready INTEGER NOT NULL DEFAULT 1/);
+  assert.match(studio, /visibleCreated\.length !== requestedCount/);
+  assert.match(studio, /WordPress下書きURLを開く/);
+  assert.match(studio, /WordPress下書きURL取得・記事カード反映がすべて完了/);
 });
