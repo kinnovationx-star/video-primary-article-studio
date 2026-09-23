@@ -16,7 +16,7 @@ test("studio exposes one unified production submit button", async () => {
 
 test("unified production persists exact controls and media metadata", async () => {
   const source = await readFile(new URL("lib/unified-production.ts", root), "utf8");
-  assert.match(source, /Array\.from\(\{ length: articleCount \}/);
+  assert.match(source, /Array\.from\([\s\S]*length: articleCount - resumeRows\.length/);
   assert.match(source, /featured_media/);
   assert.match(source, /status: "draft"/);
   assert.match(source, /metaDescription/);
@@ -110,6 +110,8 @@ test("article batches become visible only after every article, image, and WordPr
   assert.match(production, /imageResult\.images\.length !== imageCount/);
   assert.match(production, /WordPress下書きURLを取得できませんでした/);
   assert.match(production, /UPDATE articles SET batch_ready=1 WHERE project_id=/);
+  assert.match(production, /status='GENERATING' ORDER BY created_at DESC LIMIT 1/);
+  assert.match(production, /articleCount - resumeRows\.length/);
   assert.match(route, /WHERE batch_ready=1 ORDER BY updated_at DESC/);
   assert.match(migration, /batch_ready INTEGER NOT NULL DEFAULT 1/);
   assert.match(studio, /visibleCreated\.length !== requestedCount/);

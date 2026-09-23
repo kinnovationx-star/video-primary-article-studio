@@ -1098,8 +1098,7 @@ export async function createUnifiedProduction(
     );
   const categoryId = text(input.wordpress_category_id, 80),
     categoryName = text(input.wordpress_category_name, 200),
-    stamp = now(),
-    projectId = id();
+    stamp = now();
   const keywords = await keywordIdeas(
       title,
       direction,
@@ -1118,35 +1117,100 @@ export async function createUnifiedProduction(
     );
   if (wordpress && !categoryId)
     throw new Error("WordPressの投稿カテゴリーを選択してください。");
-  await runtime()
-    .DB.prepare(
-      "INSERT INTO production_projects (id,youtube_url,youtube_title,youtube_description,youtube_chapters,transcript,transcript_chars,direction,challenger_name,challenger_company,challenger_role,special_guest,mc_name,strict_evidence,image_suggestions,article_limit,image_count,wordpress_category_id,wordpress_category_name,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-    )
-    .bind(
-      projectId,
-      url,
-      title,
-      metadata.description,
-      metadata.chapters,
-      transcript,
-      transcript.length,
-      direction,
-      challengerName,
-      challengerCompany,
-      challengerRole,
-      specialGuest,
-      mcName,
-      1,
-      1,
-      articleCount,
-      imageCount,
-      categoryId,
-      categoryName,
-      "GENERATING",
-      stamp,
-      stamp,
-    )
-    .run();
+  type ResumeRow = {
+    id: string;
+    title: string;
+    wordpress_status: string;
+    wordpress_preview_url: string;
+    wordpress_edit_url: string;
+    image_count: number;
+  };
+  const resumableProject = await runtime()
+      .DB.prepare(
+        "SELECT id FROM production_projects WHERE youtube_url=? AND article_limit=? AND status='GENERATING' ORDER BY created_at DESC LIMIT 1",
+      )
+      .bind(url, articleCount)
+      .first<{ id: string }>(),
+    previous = resumableProject
+      ? await runtime()
+          .DB.prepare(
+            "SELECT a.id,a.title,a.wordpress_status,a.wordpress_preview_url,a.wordpress_edit_url,(SELECT COUNT(*) FROM article_images i WHERE i.article_id=a.id) AS image_count FROM articles a WHERE a.project_id=? ORDER BY a.rowid",
+          )
+          .bind(resumableProject.id)
+          .all<ResumeRow>()
+      : { results: [] as ResumeRow[] },
+    canResume =
+      previous.results.length > 0 &&
+      previous.results.length < articleCount &&
+      previous.results.every(
+        (article) =>
+          Number(article.image_count) >= imageCount &&
+          (!wordpress ||
+            (article.wordpress_status === "DRAFT" &&
+              Boolean(
+                article.wordpress_preview_url || article.wordpress_edit_url,
+              ))),
+      ),
+    projectId = canResume ? resumableProject!.id : id(),
+    resumeRows = canResume ? previous.results : [];
+  if (canResume)
+    await runtime().DB.batch([
+      runtime()
+        .DB.prepare(
+          "UPDATE production_projects SET youtube_title=?,youtube_description=?,youtube_chapters=?,transcript=?,transcript_chars=?,direction=?,challenger_name=?,challenger_company=?,challenger_role=?,special_guest=?,mc_name=?,image_count=?,wordpress_category_id=?,wordpress_category_name=?,updated_at=? WHERE id=?",
+        )
+        .bind(
+          title,
+          metadata.description,
+          metadata.chapters,
+          transcript,
+          transcript.length,
+          direction,
+          challengerName,
+          challengerCompany,
+          challengerRole,
+          specialGuest,
+          mcName,
+          imageCount,
+          categoryId,
+          categoryName,
+          stamp,
+          projectId,
+        ),
+      runtime()
+        .DB.prepare("UPDATE articles SET batch_ready=0 WHERE project_id=?")
+        .bind(projectId),
+    ]);
+  else
+    await runtime()
+      .DB.prepare(
+        "INSERT INTO production_projects (id,youtube_url,youtube_title,youtube_description,youtube_chapters,transcript,transcript_chars,direction,challenger_name,challenger_company,challenger_role,special_guest,mc_name,strict_evidence,image_suggestions,article_limit,image_count,wordpress_category_id,wordpress_category_name,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      )
+      .bind(
+        projectId,
+        url,
+        title,
+        metadata.description,
+        metadata.chapters,
+        transcript,
+        transcript.length,
+        direction,
+        challengerName,
+        challengerCompany,
+        challengerRole,
+        specialGuest,
+        mcName,
+        1,
+        1,
+        articleCount,
+        imageCount,
+        categoryId,
+        categoryName,
+        "GENERATING",
+        stamp,
+        stamp,
+      )
+      .run();
   const results: Array<{
       id: string;
       title: string;
@@ -1156,9 +1220,22 @@ export async function createUnifiedProduction(
       wordpressEditUrl: string;
     }> = [],
     warnings: string[] = [];
+  results.push(
+    ...resumeRows.map((article) => ({
+      id: article.id,
+      title: article.title,
+      wordpressStatus: article.wordpress_status,
+      imageCount: Number(article.image_count),
+      wordpressPreviewUrl: article.wordpress_preview_url,
+      wordpressEditUrl: article.wordpress_edit_url,
+    })),
+  );
   try {
     const completed = await Promise.all(
-      Array.from({ length: articleCount }, async (_, index) => {
+      Array.from(
+        { length: articleCount - resumeRows.length },
+        async (_, offset) => {
+        const index = resumeRows.length + offset;
         const generated = await retry(
             () =>
               generateArticle(
@@ -1347,13 +1424,14 @@ export async function createUnifiedProduction(
           wordpressPreviewUrl,
           wordpressEditUrl,
         };
-      }),
+        },
+      ),
     );
-    if (completed.length !== articleCount)
-      throw new Error(
-        `${articleCount}本中${completed.length}本しか完成しませんでした。`,
-      );
     results.push(...completed);
+    if (results.length !== articleCount)
+      throw new Error(
+        `${articleCount}本中${results.length}本しか完成しませんでした。`,
+      );
     await runtime().DB.batch([
       runtime()
         .DB.prepare("UPDATE articles SET batch_ready=1 WHERE project_id=?")
