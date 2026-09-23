@@ -380,7 +380,7 @@ export function SeoLoopApp() {
   const createProduction = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setBusy(true);
-    actionProgress.start("記事・SEO情報・画像・WordPress下書きを一括生成");
+    actionProgress.start("記事・SEO情報・画像を一括生成（WordPress下書き保存を含む）");
     try {
       const form = event.currentTarget,
         body = Object.fromEntries(new FormData(form)),
@@ -634,7 +634,36 @@ function Studio({
     [categories, setCategories] = useState<
       Array<{ id: number; label: string; count: number }>
     >([]),
-    [loadingCategories, setLoadingCategories] = useState(false);
+    [loadingCategories, setLoadingCategories] = useState(false),
+    [loadingVideo, setLoadingVideo] = useState(false),
+    [videoTitle, setVideoTitle] = useState(""),
+    [videoDescription, setVideoDescription] = useState(""),
+    [videoChapters, setVideoChapters] = useState("");
+  const loadVideoMetadata = async (url: string) => {
+    if (!url.trim()) return;
+    setLoadingVideo(true);
+    try {
+      const result = await api<{
+        metadata: {
+          title: string;
+          description: string;
+          chapters: string;
+        };
+      }>(`youtube/metadata?url=${encodeURIComponent(url.trim())}`);
+      setVideoTitle(result.metadata.title);
+      setVideoDescription(result.metadata.description);
+      setVideoChapters(result.metadata.chapters);
+      setNotice(
+        result.metadata.description
+          ? "YouTubeのタイトル・概要・目次を読み込みました。"
+          : "動画タイトルを読み込みました。概要・目次は記事作成時にも再取得します。",
+      );
+    } catch (error) {
+      setNotice(errorText(error));
+    } finally {
+      setLoadingVideo(false);
+    }
+  };
   useEffect(() => {
     if (!wordpressConnected) return;
     const timer = window.setTimeout(() => {
@@ -670,14 +699,23 @@ function Studio({
             type="url"
             required
             placeholder="https://www.youtube.com/watch?v=..."
+            onBlur={(event) => void loadVideoMetadata(event.currentTarget.value)}
           />
+          <small className="field-help">
+            URL入力後に、動画タイトル・概要・目次を自動取得します。
+          </small>
         </label>
         <label>
           動画タイトル
           <input
             name="youtube_title"
             placeholder="URLから自動取得。取得できない場合に使用します"
+            value={videoTitle}
+            onChange={(event) => setVideoTitle(event.currentTarget.value)}
           />
+          <small className="field-help">
+            {loadingVideo ? "YouTube情報を取得中…" : "自動取得後も編集できます。"}
+          </small>
         </label>
         <label>
           制作する記事数
@@ -704,7 +742,7 @@ function Studio({
             required
           />
           <small className="field-help">
-            1枚目は記事全体、2枚目以降は各H2を整理した16:9の図解です。
+            1枚目はYouTubeサムネイルを元に「A TRUTH STORY」とPART番号を加えた16:9アイキャッチ、2枚目以降は各H2の図解です。
           </small>
         </label>
         <label className="wide">
@@ -712,6 +750,57 @@ function Studio({
           <input
             name="direction"
             placeholder="例：経営者向けに、挑戦の意思決定を具体的に解説"
+          />
+        </label>
+        <label>
+          挑戦者の会社名
+          <input
+            name="challenger_company"
+            required
+            placeholder="例：株式会社〇〇"
+          />
+        </label>
+        <label>
+          挑戦者の役職
+          <input
+            name="challenger_role"
+            required
+            placeholder="例：代表取締役CEO"
+          />
+        </label>
+        <label>
+          挑戦者の出演者名
+          <input name="challenger_name" required placeholder="例：山田 太郎" />
+          <small className="field-help">
+            記事では会社名・役職・出演者名を一組で表記します。
+          </small>
+        </label>
+        <label>
+          スペシャルゲスト（任意）
+          <input name="special_guest" placeholder="例：会社名・役職・氏名" />
+        </label>
+        <label>
+          MC（任意）
+          <input name="mc_name" placeholder="例：氏名" />
+        </label>
+        <label className="wide">
+          動画概要（YouTubeから自動取得）
+          <textarea
+            name="youtube_description"
+            rows={6}
+            value={videoDescription}
+            onChange={(event) => setVideoDescription(event.currentTarget.value)}
+            placeholder="YouTube動画の概要欄を自動取得します。必要に応じて追記できます。"
+          />
+        </label>
+        <label className="wide">
+          動画目次・チャプター（YouTubeから自動抽出）
+          <textarea
+            name="youtube_chapters"
+            rows={5}
+            value={videoChapters}
+            onChange={(event) => setVideoChapters(event.currentTarget.value)}
+            placeholder="00:00 オープニング のような目次を概要欄から抽出します。"
           />
         </label>
         {wordpressConnected && (
@@ -763,7 +852,7 @@ function Studio({
           </button>
         </div>
         <p className="field-help wide">
-          Claudeが文章・SEO情報と図解設計を作り、GPT Image 2.5 Sunburstが16:9の情報図解を生成します。処理中は上部に進捗率を表示します。
+          Claudeが動画概要・目次・文字起こしを照合して文章とSEO情報を作り、GPT Image 2.5 SunburstがYouTubeサムネイルのアイキャッチと16:9の情報図解を生成します。処理中は上部に進捗率を表示します。
         </p>
       </form>
       <section className="studio-generated">

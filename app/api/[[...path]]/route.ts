@@ -36,6 +36,7 @@ import {
   getArticleImage,
   getArticleImages,
   getLiveWordPressCategories,
+  getYouTubeMetadata,
   regenerateArticleImage,
   regenerateArticleSection,
   sanitizeArticleHtml,
@@ -235,6 +236,10 @@ export async function GET(request: Request, context: Context) {
       return json({ images: await getArticleImages(path[1]) });
     if (route === "wordpress/categories")
       return json(await getLiveWordPressCategories());
+    if (route === "youtube/metadata") {
+      const url = new URL(request.url).searchParams.get("url") || "";
+      return json({ metadata: await getYouTubeMetadata(request, url) });
+    }
     if (route === "health")
       return json({
         ok: true,
@@ -355,7 +360,7 @@ export async function POST(request: Request, context: Context) {
     }
     const body = await input(request);
     if (route === "productions") {
-      const production = await createUnifiedProduction(body);
+      const production = await createUnifiedProduction(body, request);
       return json(
         {
           production,

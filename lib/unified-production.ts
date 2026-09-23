@@ -8,6 +8,7 @@ import {
 } from "./studio-server";
 import {
   getAnthropicApiKey,
+  getGoogleAccessToken,
   getOpenAiApiKey,
   getUbersuggestAccessToken,
   getWordPressConnection,
@@ -52,10 +53,30 @@ type ProductionInput = {
   image_count?: unknown;
   wordpress_category_id?: unknown;
   wordpress_category_name?: unknown;
+  youtube_description?: unknown;
+  youtube_chapters?: unknown;
+  challenger_name?: unknown;
+  challenger_company?: unknown;
+  challenger_role?: unknown;
+  special_guest?: unknown;
+  mc_name?: unknown;
+};
+
+export type YouTubeMetadata = {
+  videoId: string;
+  title: string;
+  description: string;
+  chapters: string;
+  thumbnailUrl: string;
 };
 
 const IMAGE_MODEL = "gpt-image-2.5-sunburst";
 const IMAGE_SIZE = "2048x1152";
+const brandEnglish = (value: unknown) =>
+  String(value ?? "")
+    .replace(/A\s+TRUE\s+STORY/gi, "A TRUTH STORY")
+    .replace(/ア[・\s]?トゥルー(?:ス)?[・\s]?ストーリー/gi, "A TRUTH STORY")
+    .replace(/トゥルース[・\s]?ストーリー/gi, "A TRUTH STORY");
 const diagramPrompt = (source: string) =>
   `次の内容を、記事読者が一目で理解できる日本語の情報図解にしてください。出力は厳密な16:9の横長構図です。\n\n図解する内容:\n${source}\n\n必須要件:\n- 本文の論点、因果関係、時系列、比較、手順、要素間の関係のうち、内容に最適な構造を選んで可視化する\n- 単なる人物の対談風景、背景画像、雰囲気写真、写実的な人物写真、装飾目的のイラスト、抽象的なコンセプトアートにはしない\n- 白または淡い背景、2〜4色、余白を十分に取り、シンプルで信頼感のある編集デザインにする\n- 矢印、ボックス、タイムライン、フロー、比較表などを使い、情報の階層と流れを明確にする\n- 画像内の文章は短い日本語ラベルだけに限定し、長文・ロゴ・透かし・架空の数値・本文にない事実を入れない\n- 文字は正確で読みやすく、端で切れないようにする\n- 16:9の範囲内に全要素を収める`;
 
@@ -107,55 +128,122 @@ function normalizeArticle(
   const sections = (Array.isArray(value.sections) ? value.sections : [])
     .map((item) => {
       const row = asRecord(item),
-        heading = text(row.heading, 120);
+        heading = text(brandEnglish(row.heading), 120);
       return {
         heading,
-        html: sanitizeArticleHtml(row.html),
-        imagePrompt: text(row.imagePrompt, 1000),
-        altText: text(row.altText, 180) || `${heading}の解説画像`,
+        html: sanitizeArticleHtml(brandEnglish(row.html)),
+        imagePrompt: text(brandEnglish(row.imagePrompt), 1000),
+        altText:
+          text(brandEnglish(row.altText), 180) || `${heading}の解説画像`,
       };
     })
     .filter((item) => item.heading && item.html)
     .slice(0, 8);
   if (sections.length < 2)
     throw new Error("AIが十分なH2セクションを生成できませんでした。");
-  const title = text(value.title, 160) || `${keyword}を動画の一次情報から解説`;
+  const title =
+    text(brandEnglish(value.title), 160) ||
+    `${brandEnglish(keyword)}を動画の一次情報から解説`;
   return {
     title,
-    titleTag: (text(value.titleTag, 80) || title).slice(0, 62),
-    metaDescription: text(value.metaDescription, 180).slice(0, 160),
+    titleTag: (text(brandEnglish(value.titleTag), 80) || title).slice(0, 62),
+    metaDescription: text(brandEnglish(value.metaDescription), 180).slice(0, 160),
     slug: slugify(text(value.slug, 180) || `${keyword}-${index + 1}`),
-    mainKeyword: text(value.mainKeyword, 120) || keyword,
+    mainKeyword: text(brandEnglish(value.mainKeyword), 120) || brandEnglish(keyword),
     relatedKeywords: (Array.isArray(value.relatedKeywords)
       ? value.relatedKeywords
       : []
     )
-      .map((item) => text(item, 100))
+      .map((item) => text(brandEnglish(item), 100))
       .filter(Boolean)
       .slice(0, 10),
-    searchIntent: text(value.searchIntent, 120) || "情報収集",
-    reader: text(value.reader, 240) || "動画テーマを詳しく知りたい読者",
-    angle: text(value.angle, 300) || "動画内の一次情報を整理して解説",
-    catchCopy: text(value.catchCopy, 200),
-    introductionHtml: sanitizeArticleHtml(value.introductionHtml),
+    searchIntent: text(brandEnglish(value.searchIntent), 120) || "情報収集",
+    reader:
+      text(brandEnglish(value.reader), 240) || "動画テーマを詳しく知りたい読者",
+    angle:
+      text(brandEnglish(value.angle), 300) || "動画内の一次情報を整理して解説",
+    catchCopy: text(brandEnglish(value.catchCopy), 200),
+    introductionHtml: sanitizeArticleHtml(brandEnglish(value.introductionHtml)),
     sections,
-    conclusionHtml: sanitizeArticleHtml(value.conclusionHtml),
+    conclusionHtml: sanitizeArticleHtml(brandEnglish(value.conclusionHtml)),
   };
 }
 
-async function youtubeTitle(url: string, supplied: string) {
-  if (!url) return supplied;
+export function youtubeVideoId(value: string) {
   try {
-    const response = await fetch(
-      `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`,
-      { signal: AbortSignal.timeout(10_000) },
-    );
-    if (response.ok)
-      return text(((await response.json()) as Json).title, 300) || supplied;
+    const url = new URL(value),
+      host = url.hostname.replace(/^www\./, "");
+    if (host === "youtu.be") return text(url.pathname.split("/")[1], 20);
+    if (host.endsWith("youtube.com")) {
+      if (url.pathname === "/watch") return text(url.searchParams.get("v"), 20);
+      const match = url.pathname.match(/^\/(?:shorts|embed|live)\/([^/?]+)/);
+      return text(match?.[1], 20);
+    }
   } catch {
-    /* User-provided title remains the safe fallback. */
+    return "";
   }
-  return supplied;
+  return "";
+}
+
+function descriptionChapters(description: string) {
+  return description
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /^(?:\d{1,2}:)?\d{1,2}:\d{2}\s+\S/.test(line))
+    .join("\n");
+}
+
+export async function getYouTubeMetadata(
+  request: Request,
+  url: string,
+  supplied: Partial<YouTubeMetadata> = {},
+): Promise<YouTubeMetadata> {
+  const videoId = youtubeVideoId(url);
+  if (!videoId) throw new Error("有効なYouTube動画URLを入力してください。");
+  let title = text(brandEnglish(supplied.title), 300),
+    description = text(brandEnglish(supplied.description), 30000),
+    chapters = text(brandEnglish(supplied.chapters), 12000);
+  try {
+    const token = await getGoogleAccessToken(request),
+      response = await fetch(
+        `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${encodeURIComponent(videoId)}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(20_000),
+        },
+      ),
+      payload = (await response.json().catch(() => ({}))) as Json,
+      items = Array.isArray(payload.items) ? payload.items.map(asRecord) : [],
+      snippet = asRecord(items[0]?.snippet);
+    if (response.ok && snippet.title) {
+      title = text(brandEnglish(snippet.title), 300) || title;
+      description = text(brandEnglish(snippet.description), 30000) || description;
+      chapters = descriptionChapters(description) || chapters;
+    }
+  } catch {
+    /* oEmbed and supplied fields remain available when OAuth is not connected. */
+  }
+  if (!title)
+    try {
+      const response = await fetch(
+        `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`,
+        { signal: AbortSignal.timeout(10_000) },
+      );
+      if (response.ok)
+        title = text(
+          brandEnglish(((await response.json()) as Json).title),
+          300,
+        );
+    } catch {
+      /* Supplied title remains the safe fallback. */
+    }
+  return {
+    videoId,
+    title,
+    description,
+    chapters,
+    thumbnailUrl: `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/maxresdefault.jpg`,
+  };
 }
 
 function collectKeywords(value: unknown, output: string[] = []): string[] {
@@ -232,15 +320,22 @@ async function generateArticle(
   source: {
     title: string;
     url: string;
+    description: string;
+    chapters: string;
     transcript: string;
     direction: string;
     keywords: string[];
     provider: string;
+    challengerCompany: string;
+    challengerRole: string;
+    challengerName: string;
+    specialGuest: string;
+    mcName: string;
   },
   index: number,
 ) {
   const focus = source.keywords[index % source.keywords.length] || source.title;
-  const prompt = `あなたは日本語SEO編集者です。次の動画一次情報だけを根拠に、重複しない記事${index + 1}本目を作成してください。動画にない数値・人物属性・効果・断定を補ってはいけません。主軸キーワードは「${focus}」。関連候補は ${source.keywords.slice(0, 10).join("、")}（取得元: ${source.provider}）。方向性: ${source.direction || "動画内容を忠実に整理"}\n\n動画タイトル: ${source.title}\n動画URL: ${source.url}\n文字起こし:\n${source.transcript.slice(0, 90000)}\n\nJSONオブジェクトだけを返してください。キーは title,titleTag,metaDescription,slug,mainKeyword,relatedKeywords,searchIntent,reader,angle,catchCopy,introductionHtml,sections,conclusionHtml。sectionsは3〜6件で、各要素は heading,html,imagePrompt,altText。headingはH2本文のみ（HTMLタグなし）、htmlはp/ul/ol/blockquote/strong/aだけを使う本文。本文には自然な要約・具体例・引用可能な発言・結論を含め、一次情報で確認できないことは書かない。metaDescriptionは90〜140字、titleTagは62字以内。imagePromptには、そのH2本文を分析し、図解タイトル、3〜5個の短い日本語ラベル、各要素の関係、矢印の方向、最適な図解形式（フロー・時系列・比較・構造図など）を具体的に記述する。対談風景、背景画、人物写真、装飾イラストを指示せず、一次情報にない数値や事実も入れない。`;
+  const prompt = `あなたは日本語SEO編集者です。次の動画一次情報だけを根拠に、重複しない記事${index + 1}本目を作成してください。動画にない数値・人物属性・効果・断定を補ってはいけません。主軸キーワードは「${focus}」。関連候補は ${source.keywords.slice(0, 10).join("、")}（取得元: ${source.provider}）。方向性: ${source.direction || "動画内容を忠実に整理"}\n\n番組・ブランド表記ルール: 必ず英語の「A TRUTH STORY」と書き、カタカナ表記や「A TRUE STORY」は使わない。\n挑戦者: ${source.challengerCompany} / ${source.challengerRole} / ${source.challengerName}\nスペシャルゲスト（任意）: ${source.specialGuest || "なし"}\nMC（任意）: ${source.mcName || "なし"}\n動画タイトル: ${source.title}\n動画URL: ${source.url}\n動画概要（動画投稿者の記載）:\n${source.description.slice(0, 30000) || "取得なし"}\n動画目次・チャプター:\n${source.chapters.slice(0, 12000) || "取得なし"}\n文字起こし:\n${source.transcript.slice(0, 90000)}\n\n動画概要・目次・文字起こしを相互に照合し、概要と各チャプターの流れを記事構成へ反映すること。出演者を本文で紹介するときは、挑戦者を必ず「${source.challengerCompany} ${source.challengerRole} ${source.challengerName}」として扱う。任意出演者は値がある場合だけ記載する。\n\nJSONオブジェクトだけを返してください。キーは title,titleTag,metaDescription,slug,mainKeyword,relatedKeywords,searchIntent,reader,angle,catchCopy,introductionHtml,sections,conclusionHtml。sectionsは3〜6件で、各要素は heading,html,imagePrompt,altText。headingはH2本文のみ（HTMLタグなし）、htmlはp/ul/ol/blockquote/strong/aだけを使う本文。本文には自然な要約・具体例・引用可能な発言・結論を含め、一次情報で確認できないことは書かない。metaDescriptionは90〜140字、titleTagは62字以内。imagePromptには、そのH2本文を分析し、図解タイトル、3〜5個の短い日本語ラベル、各要素の関係、矢印の方向、最適な図解形式（フロー・時系列・比較・構造図など）を具体的に記述する。対談風景、背景画、人物写真、装飾イラストを指示せず、一次情報にない数値や事実も入れない。`;
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -297,6 +392,12 @@ async function generateImages(
   articleId: string,
   article: GeneratedArticle,
   count: number,
+  source: {
+    thumbnailUrl: string;
+    videoId: string;
+    articleIndex: number;
+    articleCount: number;
+  },
 ) {
   if (!apiKey)
     return {
@@ -314,8 +415,8 @@ async function generateImages(
     {
       kind: "featured",
       heading: article.title,
-      alt: `${article.title}のアイキャッチ画像`,
-      prompt: `記事全体の要約図解。図解タイトルは「${article.mainKeyword}」。中心に主題を置き、周囲に「${article.sections.slice(0, 4).map((section) => section.heading).join("」「")}」の要点を短い日本語ラベルで配置し、記事全体の関係性が分かる構造図にする。`,
+      alt: `${article.title}｜A TRUTH STORY${source.articleCount > 1 ? ` PART ${source.articleIndex + 1}` : ""}`,
+      prompt: `YouTubeサムネイルを元画像として保持し、番組名「A TRUTH STORY」${source.articleCount > 1 ? `と記事番号「PART ${source.articleIndex + 1}」` : ""}を加えたアイキャッチ画像`,
     },
     ...article.sections.map((section) => ({
       kind: "section",
@@ -334,7 +435,10 @@ async function generateImages(
   }> = [];
   for (let index = 0; index < prompts.length; index++) {
     const item = prompts[index],
-      bytes = await createImageBytes(apiKey, item.prompt);
+      bytes =
+        item.kind === "featured"
+          ? await createFeaturedImageBytes(apiKey, source, article.title)
+          : await createImageBytes(apiKey, item.prompt);
     const imageId = id(),
       key = `articles/${articleId}/${item.kind}-${index}.png`;
     await runtime().FILES.put(key, bytes, {
@@ -650,6 +754,83 @@ async function createImageBytes(apiKey: string, prompt: string) {
   return base64Bytes(encoded);
 }
 
+async function youtubeThumbnailBytes(thumbnailUrl: string, videoId: string) {
+  const urls = [
+    thumbnailUrl,
+    `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/sddefault.jpg`,
+    `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg`,
+  ];
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (
+        response.ok &&
+        /image\/(?:jpeg|png|webp)/i.test(response.headers.get("content-type") || "")
+      )
+        return {
+          bytes: new Uint8Array(await response.arrayBuffer()),
+          contentType: response.headers.get("content-type") || "image/jpeg",
+        };
+    } catch {
+      /* Try the next official thumbnail resolution. */
+    }
+  }
+  throw new Error("YouTubeサムネイル画像を取得できませんでした。");
+}
+
+async function createFeaturedImageBytes(
+  apiKey: string,
+  source: {
+    thumbnailUrl: string;
+    videoId: string;
+    articleIndex: number;
+    articleCount: number;
+  },
+  articleTitle: string,
+) {
+  const thumbnail = await youtubeThumbnailBytes(
+      source.thumbnailUrl,
+      source.videoId,
+    ),
+    part =
+      source.articleCount > 1 ? `PART ${source.articleIndex + 1}` : "",
+    form = new FormData();
+  form.append("model", IMAGE_MODEL);
+  form.append(
+    "prompt",
+    `アップロードされたYouTubeサムネイルを必ず元画像として使い、人物・被写体・番組の主要構図を保持したまま16:9の横長アイキャッチに整えてください。読みやすい余白または半透明の帯を設け、英語で正確に「A TRUTH STORY」${part ? `と「${part}」` : ""}だけを追加してください。「A TRUTH STORY」をカタカナや「A TRUE STORY」に変えないでください。記事タイトル「${articleTitle}」の内容に沿う落ち着いたSEOメディア向けデザインにし、元サムネイルにない人物・ロゴ・出来事を追加しないでください。`,
+  );
+  form.append(
+    "image[]",
+    new Blob([thumbnail.bytes], { type: thumbnail.contentType }),
+    "youtube-thumbnail.jpg",
+  );
+  form.append("n", "1");
+  form.append("size", IMAGE_SIZE);
+  form.append("quality", "high");
+  form.append("output_format", "png");
+  const response = await fetch("https://api.openai.com/v1/images/edits", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+      signal: AbortSignal.timeout(110_000),
+    }),
+    payload = (await response.json().catch(() => ({}))) as Json,
+    data = Array.isArray(payload.data) ? payload.data.map(asRecord) : [],
+    encoded = text(data[0]?.b64_json, 20_000_000);
+  if (!response.ok || !encoded)
+    throw new Error(
+      text(
+        asRecord(payload.error).message ||
+          `サムネイル編集APIエラー (${response.status})`,
+        240,
+      ),
+    );
+  return base64Bytes(encoded);
+}
+
 function replaceSectionImage(
   html: string,
   heading: string,
@@ -848,17 +1029,33 @@ export async function regenerateArticleImage(
   };
 }
 
-export async function createUnifiedProduction(input: ProductionInput) {
+export async function createUnifiedProduction(
+  input: ProductionInput,
+  request: Request,
+) {
   const transcript = text(input.transcript, 120000),
     url = text(input.youtube_url, 1000),
-    direction = text(input.direction, 1000);
+    direction = text(brandEnglish(input.direction), 1000),
+    challengerCompany = text(brandEnglish(input.challenger_company), 300),
+    challengerRole = text(brandEnglish(input.challenger_role), 300),
+    challengerName = text(brandEnglish(input.challenger_name), 300),
+    specialGuest = text(brandEnglish(input.special_guest), 500),
+    mcName = text(brandEnglish(input.mc_name), 500);
   if (transcript.length < 80)
     throw new Error("80文字以上の文字起こしを入力してください。");
   if (!url) throw new Error("YouTube動画URLを入力してください。");
+  if (!challengerCompany || !challengerRole || !challengerName)
+    throw new Error(
+      "挑戦者の会社名・役職・出演者名をすべて入力してください。",
+    );
   const articleCount = clamp(input.article_limit, 1),
     imageCount = clamp(input.image_count, 1),
-    suppliedTitle = text(input.youtube_title, 300),
-    title = await youtubeTitle(url, suppliedTitle);
+    metadata = await getYouTubeMetadata(request, url, {
+      title: text(input.youtube_title, 300),
+      description: text(input.youtube_description, 30000),
+      chapters: text(input.youtube_chapters, 12000),
+    }),
+    title = metadata.title;
   if (!title)
     throw new Error(
       "動画タイトルを取得できませんでした。動画タイトルを入力してください。",
@@ -883,15 +1080,22 @@ export async function createUnifiedProduction(input: ProductionInput) {
     throw new Error("WordPressの投稿カテゴリーを選択してください。");
   await runtime()
     .DB.prepare(
-      "INSERT INTO production_projects (id,youtube_url,youtube_title,transcript,transcript_chars,direction,strict_evidence,image_suggestions,article_limit,image_count,wordpress_category_id,wordpress_category_name,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO production_projects (id,youtube_url,youtube_title,youtube_description,youtube_chapters,transcript,transcript_chars,direction,challenger_name,challenger_company,challenger_role,special_guest,mc_name,strict_evidence,image_suggestions,article_limit,image_count,wordpress_category_id,wordpress_category_name,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     )
     .bind(
       projectId,
       url,
       title,
+      metadata.description,
+      metadata.chapters,
       transcript,
       transcript.length,
       direction,
+      challengerName,
+      challengerCompany,
+      challengerRole,
+      specialGuest,
+      mcName,
       1,
       1,
       articleCount,
@@ -917,10 +1121,17 @@ export async function createUnifiedProduction(input: ProductionInput) {
         {
           title,
           url,
+          description: metadata.description,
+          chapters: metadata.chapters,
           transcript,
           direction,
           keywords: keywords.keywords,
           provider: keywords.provider,
+          challengerCompany,
+          challengerRole,
+          challengerName,
+          specialGuest,
+          mcName,
         },
         index,
       ),
@@ -946,7 +1157,21 @@ export async function createUnifiedProduction(input: ProductionInput) {
       .run();
     const initialHtml = bodyHtml(generated, []),
       evidence = JSON.stringify([
-        { source: url, title, transcriptCharacters: transcript.length },
+        {
+          source: url,
+          title,
+          videoId: metadata.videoId,
+          descriptionCharacters: metadata.description.length,
+          chapters: metadata.chapters.split(/\r?\n/).filter(Boolean).length,
+          transcriptCharacters: transcript.length,
+          challenger: {
+            company: challengerCompany,
+            role: challengerRole,
+            name: challengerName,
+          },
+          specialGuest,
+          mc: mcName,
+        },
       ]);
     await runtime()
       .DB.prepare(
@@ -1001,6 +1226,12 @@ export async function createUnifiedProduction(input: ProductionInput) {
         articleId,
         generated,
         imageCount,
+        {
+          thumbnailUrl: metadata.thumbnailUrl,
+          videoId: metadata.videoId,
+          articleIndex: index,
+          articleCount,
+        },
       );
       if (imageResult.warning) warnings.push(imageResult.warning);
     } catch (error) {
@@ -1092,6 +1323,11 @@ export async function createUnifiedProduction(input: ProductionInput) {
     warnings: [...new Set(warnings)],
     title,
     provider: `${model} / ${keywords.provider}`,
+    metadata: {
+      title,
+      descriptionCharacters: metadata.description.length,
+      chapterCount: metadata.chapters.split(/\r?\n/).filter(Boolean).length,
+    },
   };
 }
 

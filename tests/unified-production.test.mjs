@@ -71,3 +71,31 @@ test("GPT Image 2.5 generates restrained 16:9 content diagrams", async () => {
   assert.match(styles, /aspect-ratio: 16 \/ 9/);
   assert.match(styles, /max-width: 620px/);
 });
+
+test("YouTube metadata, cast fields, and thumbnail-based PART covers are wired end to end", async () => {
+  const studio = await readFile(new URL("app/seo-loop-app.tsx", root), "utf8");
+  const production = await readFile(new URL("lib/unified-production.ts", root), "utf8");
+  const route = await readFile(new URL("app/api/[[...path]]/route.ts", root), "utf8");
+  const migration = await readFile(new URL("migrations/0008_youtube_metadata_and_cast.sql", root), "utf8");
+
+  for (const field of [
+    "challenger_company",
+    "challenger_role",
+    "challenger_name",
+    "special_guest",
+    "mc_name",
+    "youtube_description",
+    "youtube_chapters",
+  ]) assert.match(studio, new RegExp(`name=["']${field}["']`));
+  assert.match(studio, /youtube\/metadata\?url=/);
+  assert.match(route, /youtube\/metadata/);
+  assert.match(production, /youtube\/v3\/videos\?part=snippet/);
+  assert.match(production, /i\.ytimg\.com\/vi/);
+  assert.match(production, /v1\/images\/edits/);
+  assert.match(production, /image\[\]/);
+  assert.match(production, /A TRUTH STORY/);
+  assert.match(production, /PART \$\{source\.articleIndex \+ 1\}/);
+  assert.match(migration, /youtube_description/);
+  assert.match(migration, /youtube_chapters/);
+  assert.match(migration, /challenger_role/);
+});
