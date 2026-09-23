@@ -40,3 +40,22 @@ test("article library includes the SEO LOOP style visual editor", async () => {
   assert.match(source, /変更を保存してプレビューへ反映/);
   assert.match(source, /`articles\/\$\{item\.id\}`[\s\S]*"PATCH"/);
 });
+
+test("generated article cards stay below the studio form and expose AI editing", async () => {
+  const source = await readFile(new URL("app/seo-loop-app.tsx", root), "utf8");
+  assert.match(source, /<Library[\s\S]*embedded/);
+  assert.match(source, /このH2本文をAIで再生成/);
+  assert.match(source, /このH2画像をAIで再生成/);
+  assert.match(source, /アイキャッチ画像をAIで再生成/);
+  assert.match(source, /WordPress下書きを閲覧/);
+});
+
+test("article regeneration APIs and WordPress preview URL are persisted", async () => {
+  const route = await readFile(new URL("app/api/[[...path]]/route.ts", root), "utf8");
+  const production = await readFile(new URL("lib/unified-production.ts", root), "utf8");
+  const migration = await readFile(new URL("migrations/0007_article_editing_and_preview.sql", root), "utf8");
+  assert.match(route, /regenerate-section/);
+  assert.match(route, /regenerate-image/);
+  assert.match(production, /preview=true/);
+  assert.match(migration, /wordpress_preview_url/);
+});
