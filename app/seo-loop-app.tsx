@@ -1094,7 +1094,13 @@ function ArticleLibraryItem({
     },
     featuredImage =
       images.find((image) => image.kind === "featured")?.url ||
-      draft.featured_image_url;
+      draft.featured_image_url,
+    wordpressPreviewUrl =
+      item.wordpress_preview_url ||
+      item.wordpress_edit_url?.replace(
+        /\/wp-admin\/post\.php\?post=(\d+)&action=edit/,
+        "/?p=$1&preview=true",
+      );
   return (
     <article className={`panel library-editor-item ${open ? "is-open" : ""}`}>
       <button className="library-editor-head" onClick={toggle}>
@@ -1480,10 +1486,10 @@ function ArticleLibraryItem({
             >
               {saving ? "保存中…" : "変更を保存してプレビューへ反映"}
             </button>
-            {item.wordpress_preview_url && (
+            {wordpressPreviewUrl && (
               <a
                 className="secondary wp-edit-link"
-                href={item.wordpress_preview_url}
+                href={wordpressPreviewUrl}
                 target="_blank"
                 rel="noreferrer"
               >
