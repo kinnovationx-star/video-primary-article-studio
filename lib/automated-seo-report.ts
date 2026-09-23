@@ -110,6 +110,36 @@ async function analyzeWithClaude(input: JsonObject, fallback: AiAnalysis) {
   finally { clearTimeout(timer); }
 }
 
+async function analyzeWithOpenAi(input: JsonObject, fallback: AiAnalysis) {
+  const key = runtime().OPENAI_API_KEY;
+  if (!key) return { analysis: fallback, provider: "ルールベース分析（利用可能なAIがありません）" };
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 60000);
+  const stringArray = { type: "array", items: { type: "string" } };
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["executiveSummary", "strengths", "issues", "actions", "pdca"],
+    properties: {
+      executiveSummary: { type: "string" }, strengths: stringArray, issues: stringArray, actions: stringArray,
+      pdca: { type: "object", additionalProperties: false, required: ["plan", "do", "check", "act"], properties: { plan: stringArray, do: stringArray, check: stringArray, act: stringArray } },
+    },
+  };
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` }, body: JSON.stringify({ model: "gpt-5.4-mini", store: false, max_output_tokens: 2400, instructions: "あなたはSEOデータアナリストです。提供された実測データだけを根拠にし、未取得値を推測しません。日本語で回答してください。", input: `GSC・GA4・Ubersuggest SERP・競合ページ・記事制作状況を統合し、経営者にも理解できる改善レポートを作成してください。データ:${compact(input)}`, text: { format: { type: "json_schema", name: "seo_integrated_report", strict: true, schema } } }), signal: controller.signal });
+    const payload = await response.json().catch(() => ({})) as JsonObject;
+    if (!response.ok) throw new Error(text((payload.error as JsonObject | undefined)?.message || `OpenAI APIエラー (${response.status})`, 240));
+    const output = Array.isArray(payload.output) ? payload.output as JsonObject[] : [];
+    const outputText = output.flatMap(item => Array.isArray(item.content) ? item.content as JsonObject[] : []).filter(item => item.type === "output_text").map(item => text(item.text, 10000)).join("");
+    return { analysis: cleanClaudeJson(outputText), provider: "OpenAI AI (gpt-5.4-mini)" };
+  } catch { return { analysis: fallback, provider: "ルールベース分析（AI応答を取得できなかったため）" }; }
+  finally { clearTimeout(timer); }
+}
+
+async function analyzeWithAi(input: JsonObject, fallback: AiAnalysis) {
+  const claude = await analyzeWithClaude(input, fallback);
+  return claude.provider.startsWith("Claude AI") ? claude : analyzeWithOpenAi(input, fallback);
+}
+
 export async function generateAutomatedSeoReport(request: Request) {
   const end = new Date(), start = new Date(end.getTime() - 27 * 86400000), startDate = isoDate(start), endDate = isoDate(end), sourceStatus: SourceStatus[] = [];
   const [gscProfile, ga4Profile] = await Promise.all([integrationConfig("gsc"), integrationConfig("ga4")]);
@@ -145,8 +175,8 @@ export async function generateAutomatedSeoReport(request: Request) {
   const gscSummary = gsc?.summary, gaSummary = ga4?.summary;
   const visibility = clamp((gscSummary?.ctr || 0) * 900 + Math.max(0, 55 - (gscSummary?.position || 55))), engagement = clamp(gaSummary?.sessions ? gaSummary.engagedSessions / gaSummary.sessions * 100 : 0), competitive = clamp(competition?.scores.competitorDepth || 0), opportunity = clamp(100 - (competition?.scores.keywordCoverage || 0)), scores: ReportScores = { visibility, engagement, competitive, opportunity, overall: clamp(visibility * .32 + engagement * .28 + competitive * .2 + opportunity * .2) };
   const fallback = fallbackAnalysis(scores, keyword, gsc as unknown as JsonObject | null, ga4 as unknown as JsonObject | null, (serp?.results || []) as unknown as JsonObject[]);
-  const ai = await analyzeWithClaude({ period: { startDate, endDate }, keyword, gsc, ga4, serp: serp ? { results: serp.results.slice(0, 10), features: serp.features } : null, competition, articles: latestArticle ? [latestArticle] : [], sources: sourceStatus }, fallback);
-  sourceStatus.push({ source: "AI統合分析", status: ai.provider.startsWith("Claude AI") ? "取得済み" : "未取得", detail: ai.provider });
+  const ai = await analyzeWithAi({ period: { startDate, endDate }, keyword, gsc, ga4, serp: serp ? { results: serp.results.slice(0, 10), features: serp.features } : null, competition, articles: latestArticle ? [latestArticle] : [], sources: sourceStatus }, fallback);
+  sourceStatus.push({ source: "AI統合分析", status: /^(Claude|OpenAI) AI/.test(ai.provider) ? "取得済み" : "未取得", detail: ai.provider });
   const report = { id: id(), generatedAt: now(), period: { start: startDate, end: endDate }, targets: { searchConsole: gscSite || null, ga4: gaProperty || null }, sourceStatus, keyword, scores, gsc, ga4, competitors: serp?.results.slice(0, 10) || [], competition, ai: ai.analysis, aiProvider: ai.provider, trend: { search: (gsc?.daily || []).map(row => ({ date: row.date, primary: row.clicks, secondary: row.impressions } satisfies TrendPoint)), traffic: (ga4?.daily || []).map(row => ({ date: row.date, primary: row.sessions, secondary: row.engagedSessions } satisfies TrendPoint)) } };
   await runtime().DB.prepare("INSERT INTO automated_reports (id,generated_at,period_start,period_end,report_json) VALUES (?,?,?,?,?)").bind(report.id, report.generatedAt, startDate, endDate, JSON.stringify(report)).run();
   return report;
