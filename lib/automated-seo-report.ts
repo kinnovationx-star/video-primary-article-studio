@@ -97,15 +97,15 @@ function cleanClaudeJson(value: string) {
 }
 
 async function analyzeWithClaude(input: JsonObject, fallback: AiAnalysis) {
-  const key = runtime().ANTHROPIC_API_KEY;
+  const key = runtime().ANTHROPIC_API_KEY, profile = await integrationConfig("anthropic"), model = text(profile.config.model, 160) || "claude-sonnet-4-6";
   if (!key) return { analysis: fallback, provider: "ルールベース分析" };
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 60000);
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" }, body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2600, temperature: 0.2, system: "あなたはSEOデータアナリストです。提供された実測データだけを根拠にし、未取得値を推測しません。日本語のJSONだけを返してください。", messages: [{ role: "user", content: `GSC・GA4・Ubersuggest SERP・競合ページ・記事制作状況を統合し、経営者にも理解できる改善レポートを作成してください。JSON形式: {"executiveSummary":"","strengths":[""],"issues":[""],"actions":[""],"pdca":{"plan":[""],"do":[""],"check":[""],"act":[""]}}。データ:${compact(input)}` }] }), signal: controller.signal });
+    const response = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" }, body: JSON.stringify({ model, max_tokens: 2600, temperature: 0.2, system: "あなたはSEOデータアナリストです。提供された実測データだけを根拠にし、未取得値を推測しません。日本語のJSONだけを返してください。", messages: [{ role: "user", content: `GSC・GA4・Ubersuggest SERP・競合ページ・記事制作状況を統合し、経営者にも理解できる改善レポートを作成してください。JSON形式: {"executiveSummary":"","strengths":[""],"issues":[""],"actions":[""],"pdca":{"plan":[""],"do":[""],"check":[""],"act":[""]}}。データ:${compact(input)}` }] }), signal: controller.signal });
     const payload = await response.json().catch(() => ({})) as JsonObject;
     if (!response.ok) throw new Error(text((payload.error as JsonObject | undefined)?.message || `Claude APIエラー (${response.status})`, 240));
     const content = Array.isArray(payload.content) ? payload.content as JsonObject[] : [], output = content.map(item => text(item.text, 10000)).join("");
-    return { analysis: cleanClaudeJson(output), provider: "Claude AI" };
+    return { analysis: cleanClaudeJson(output), provider: `Claude AI (${model})` };
   } catch { return { analysis: fallback, provider: "ルールベース分析（AI応答を取得できなかったため）" }; }
   finally { clearTimeout(timer); }
 }
@@ -144,7 +144,9 @@ export async function generateAutomatedSeoReport(request: Request) {
   const primary = `${latestProject?.youtube_title || ""} ${latestProject?.direction || ""} ${latestProject?.transcript || ""}`.slice(0, 12000), competition = competitorSources.length ? analyzeCompetition(keyword, primary, competitorSources) : null;
   const gscSummary = gsc?.summary, gaSummary = ga4?.summary;
   const visibility = clamp((gscSummary?.ctr || 0) * 900 + Math.max(0, 55 - (gscSummary?.position || 55))), engagement = clamp(gaSummary?.sessions ? gaSummary.engagedSessions / gaSummary.sessions * 100 : 0), competitive = clamp(competition?.scores.competitorDepth || 0), opportunity = clamp(100 - (competition?.scores.keywordCoverage || 0)), scores: ReportScores = { visibility, engagement, competitive, opportunity, overall: clamp(visibility * .32 + engagement * .28 + competitive * .2 + opportunity * .2) };
-  const fallback = fallbackAnalysis(scores, keyword, gsc as unknown as JsonObject | null, ga4 as unknown as JsonObject | null, (serp?.results || []) as unknown as JsonObject[]), ai = await analyzeWithClaude({ period: { startDate, endDate }, keyword, gsc, ga4, serp: serp ? { results: serp.results.slice(0, 10), features: serp.features } : null, competition, articles: latestArticle ? [latestArticle] : [], sources: sourceStatus }, fallback);
+  const fallback = fallbackAnalysis(scores, keyword, gsc as unknown as JsonObject | null, ga4 as unknown as JsonObject | null, (serp?.results || []) as unknown as JsonObject[]);
+  const ai = await analyzeWithClaude({ period: { startDate, endDate }, keyword, gsc, ga4, serp: serp ? { results: serp.results.slice(0, 10), features: serp.features } : null, competition, articles: latestArticle ? [latestArticle] : [], sources: sourceStatus }, fallback);
+  sourceStatus.push({ source: "AI統合分析", status: ai.provider.startsWith("Claude AI") ? "取得済み" : "未取得", detail: ai.provider });
   const report = { id: id(), generatedAt: now(), period: { start: startDate, end: endDate }, targets: { searchConsole: gscSite || null, ga4: gaProperty || null }, sourceStatus, keyword, scores, gsc, ga4, competitors: serp?.results.slice(0, 10) || [], competition, ai: ai.analysis, aiProvider: ai.provider, trend: { search: (gsc?.daily || []).map(row => ({ date: row.date, primary: row.clicks, secondary: row.impressions } satisfies TrendPoint)), traffic: (ga4?.daily || []).map(row => ({ date: row.date, primary: row.sessions, secondary: row.engagedSessions } satisfies TrendPoint)) } };
   await runtime().DB.prepare("INSERT INTO automated_reports (id,generated_at,period_start,period_end,report_json) VALUES (?,?,?,?,?)").bind(report.id, report.generatedAt, startDate, endDate, JSON.stringify(report)).run();
   return report;
