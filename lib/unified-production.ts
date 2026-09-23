@@ -863,7 +863,9 @@ export async function regenerateArticleImage(
   },
 ) {
   const article = await runtime()
-    .DB.prepare("SELECT * FROM articles WHERE id=?")
+    .DB.prepare(
+      "SELECT a.*,p.youtube_url FROM articles a JOIN production_projects p ON p.id=a.project_id WHERE a.id=?",
+    )
     .bind(articleId)
     .first<Record<string, unknown>>();
   if (!article) throw new Error("記事が見つかりません。");
@@ -880,17 +882,38 @@ export async function regenerateArticleImage(
     prompt =
       text(options.prompt, 1200) ||
       (kind === "featured"
-        ? `記事「${article.title}」の主題と主要論点を整理した全体構造図`
+        ? `YouTubeサムネイルを元画像として保持し、番組名「A TRUTH STORY」と記事番号を加えたアイキャッチ画像`
         : `H2「${heading}」の論点・因果関係・流れを整理した情報図解`),
     imageId = id(),
     key = `articles/${articleId}/${kind}-${Date.now()}.png`,
     stamp = now();
+  let bytes: Uint8Array;
+  if (kind === "featured") {
+    const videoId = youtubeVideoId(text(article.youtube_url, 1000));
+    if (!videoId)
+      throw new Error("元動画のYouTube URLからサムネイルを特定できません。");
+    const related = await runtime()
+      .DB.prepare(
+        "SELECT id FROM articles WHERE project_id=? ORDER BY rowid",
+      )
+      .bind(text(article.project_id, 80))
+      .all<{ id: string }>();
+    const articleIds = related.results.map((row) => row.id),
+      articleIndex = Math.max(0, articleIds.indexOf(articleId));
+    bytes = await createFeaturedImageBytes(
+      apiKey,
+      {
+        videoId,
+        thumbnailUrl: `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/maxresdefault.jpg`,
+        articleIndex,
+        articleCount: Math.max(1, articleIds.length),
+      },
+      text(article.title, 300),
+    );
+  } else bytes = await createImageBytes(apiKey, prompt);
   await runtime().FILES.put(
     key,
-    await createImageBytes(
-      apiKey,
-      prompt,
-    ),
+    bytes,
     {
       httpMetadata: {
         contentType: "image/png",
