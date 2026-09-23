@@ -202,7 +202,7 @@ async function saveGoogleTokens(tokens: OAuthTokens) {
   return merged;
 }
 
-async function googleAccessToken(request: Request) {
+export async function getGoogleAccessToken(request: Request) {
   const saved = await loadCredential<OAuthTokens>("google_oauth");
   if (!saved?.value.access_token) throw new Error("Googleアカウントを接続してください。");
   if (!saved.expiresAt || Date.parse(saved.expiresAt) > Date.now() + 120_000) return saved.value.access_token;
@@ -215,7 +215,7 @@ async function googleAccessToken(request: Request) {
 }
 
 export async function verifyGoogleIntegrations(request: Request, suppliedToken?: string) {
-  const accessToken = suppliedToken || await googleAccessToken(request), headers = { Authorization: `Bearer ${accessToken}` };
+  const accessToken = suppliedToken || await getGoogleAccessToken(request), headers = { Authorization: `Bearer ${accessToken}` };
   const verify = async (provider: typeof googleProviders[number], load: () => Promise<JsonObject>) => {
     try { return await setProfile(provider, "CONFIGURED", await load(), now()); }
     catch (error) { return setProfile(provider, "CONNECTION_ERROR", { lastError: text(error instanceof Error ? error.message : error, 240) }, null); }
