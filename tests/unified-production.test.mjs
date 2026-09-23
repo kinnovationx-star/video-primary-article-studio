@@ -22,6 +22,7 @@ test("unified production persists exact controls and media metadata", async () =
   assert.match(source, /metaDescription/);
   assert.match(source, /section_images_json/);
   assert.match(source, /wordpress_category_id/);
+  assert.doesNotMatch(source, /temperature:/);
 });
 
 test("migration isolates generated images in D1 and R2 metadata", async () => {
@@ -29,4 +30,13 @@ test("migration isolates generated images in D1 and R2 metadata", async () => {
   assert.match(migration, /CREATE TABLE IF NOT EXISTS article_images/);
   assert.match(migration, /featured_image_url/);
   assert.match(migration, /wordpress_category_id/);
+});
+
+test("article library includes the SEO LOOP style visual editor", async () => {
+  const source = await readFile(new URL("app/seo-loop-app.tsx", root), "utf8");
+  assert.match(source, /WordPressと同じ見た目で、直接編集できます/);
+  assert.match(source, /このH2を編集/);
+  assert.match(source, /SEO設定（タイトルタグ・URL末尾・説明文・キーワード）/);
+  assert.match(source, /変更を保存してプレビューへ反映/);
+  assert.match(source, /`articles\/\$\{item\.id\}`[\s\S]*"PATCH"/);
 });

@@ -14,7 +14,7 @@ type GeneratedArticle = {
 type ProductionInput = { youtube_url?: unknown; youtube_title?: unknown; transcript?: unknown; direction?: unknown; article_limit?: unknown; image_count?: unknown; wordpress_category_id?: unknown; wordpress_category_name?: unknown };
 
 const asRecord = (value: unknown): Json => value && typeof value === "object" && !Array.isArray(value) ? value as Json : {};
-const safeHtml = (value: unknown) => String(value || "")
+export const sanitizeArticleHtml = (value: unknown) => String(value || "")
   .replace(/<\/?(?:script|style|iframe|object|embed|form)[^>]*>/gi, "")
   .replace(/\son\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
   .replace(/javascript:/gi, "")
@@ -33,7 +33,7 @@ function jsonFromText(value: string) {
 function normalizeArticle(value: Json, keyword: string, index: number): GeneratedArticle {
   const sections = (Array.isArray(value.sections) ? value.sections : []).map(item => {
     const row = asRecord(item), heading = text(row.heading, 120);
-    return { heading, html: safeHtml(row.html), imagePrompt: text(row.imagePrompt, 1000), altText: text(row.altText, 180) || `${heading}の解説画像` };
+    return { heading, html: sanitizeArticleHtml(row.html), imagePrompt: text(row.imagePrompt, 1000), altText: text(row.altText, 180) || `${heading}の解説画像` };
   }).filter(item => item.heading && item.html).slice(0, 8);
   if (sections.length < 2) throw new Error("AIが十分なH2セクションを生成できませんでした。");
   const title = text(value.title, 160) || `${keyword}を動画の一次情報から解説`;
@@ -48,9 +48,9 @@ function normalizeArticle(value: Json, keyword: string, index: number): Generate
     reader: text(value.reader, 240) || "動画テーマを詳しく知りたい読者",
     angle: text(value.angle, 300) || "動画内の一次情報を整理して解説",
     catchCopy: text(value.catchCopy, 200),
-    introductionHtml: safeHtml(value.introductionHtml),
+    introductionHtml: sanitizeArticleHtml(value.introductionHtml),
     sections,
-    conclusionHtml: safeHtml(value.conclusionHtml),
+    conclusionHtml: sanitizeArticleHtml(value.conclusionHtml),
   };
 }
 
@@ -100,7 +100,7 @@ async function anthropicModel(apiKey: string) {
 async function generateArticle(apiKey: string, model: string, source: { title: string; url: string; transcript: string; direction: string; keywords: string[]; provider: string }, index: number) {
   const focus = source.keywords[index % source.keywords.length] || source.title;
   const prompt = `あなたは日本語SEO編集者です。次の動画一次情報だけを根拠に、重複しない記事${index + 1}本目を作成してください。動画にない数値・人物属性・効果・断定を補ってはいけません。主軸キーワードは「${focus}」。関連候補は ${source.keywords.slice(0, 10).join("、")}（取得元: ${source.provider}）。方向性: ${source.direction || "動画内容を忠実に整理"}\n\n動画タイトル: ${source.title}\n動画URL: ${source.url}\n文字起こし:\n${source.transcript.slice(0, 90000)}\n\nJSONオブジェクトだけを返してください。キーは title,titleTag,metaDescription,slug,mainKeyword,relatedKeywords,searchIntent,reader,angle,catchCopy,introductionHtml,sections,conclusionHtml。sectionsは3〜6件で、各要素は heading,html,imagePrompt,altText。headingはH2本文のみ（HTMLタグなし）、htmlはp/ul/ol/blockquote/strong/aだけを使う本文。本文には自然な要約・具体例・引用可能な発言・結論を含め、一次情報で確認できないことは書かない。metaDescriptionは90〜140字、titleTagは62字以内。imagePromptはそのH2の内容を正確に図解する日本語プロンプトで、文字・ロゴ・架空の数値を画像内に入れない。`;
-  const response = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" }, body: JSON.stringify({ model, max_tokens: 8000, temperature: 0.35, messages: [{ role: "user", content: prompt }] }), signal: AbortSignal.timeout(110_000) });
+  const response = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" }, body: JSON.stringify({ model, max_tokens: 8000, messages: [{ role: "user", content: prompt }] }), signal: AbortSignal.timeout(110_000) });
   const payload = await response.json().catch(() => ({})) as Json;
   if (!response.ok) throw new Error(text(asRecord(payload.error).message || `Claude APIエラー (${response.status})`, 240));
   const content = Array.isArray(payload.content) ? payload.content.map(asRecord).filter(item => item.type === "text").map(item => String(item.text || "")).join("\n") : "";
@@ -157,6 +157,15 @@ async function publishDraft(connection: NonNullable<Awaited<ReturnType<typeof ge
   const wpHtml = bodyHtml(article, uploadedUrls), created = await wordpressRequest(`${base}/wp-json/wp/v2/posts`, { method: "POST", headers: { Authorization: authorization, "Content-Type": "application/json" }, body: JSON.stringify({ title: article.title, content: wpHtml || html, status: "draft", slug: article.slug, excerpt: article.metaDescription, categories: categoryId ? [Number(categoryId)] : [], featured_media: mediaIds[0] || 0 }) });
   const postId = text(created.id, 80);
   return { postId, editUrl: postId ? `${base}/wp-admin/post.php?post=${postId}&action=edit` : "", html: wpHtml || html, featuredUrl: uploadedUrls[0] || "", uploadedUrls };
+}
+
+export async function updateWordPressDraft(article: Record<string, unknown>) {
+  const connection = await getWordPressConnection(), postId = text(article.wordpress_post_id, 80);
+  if (!connection || !postId) return { updated: false, reason: "WordPress下書き未連携" };
+  if (connection.authMode !== "rest") throw new Error("WordPress下書きの更新にはREST API接続が必要です。");
+  const base = wordpressBase(connection.siteUrl), authorization = wordpressAuth(connection.username, connection.applicationPassword), categoryId = Number(article.category_id || 0);
+  await wordpressRequest(`${base}/wp-json/wp/v2/posts/${postId}`, { method: "POST", headers: { Authorization: authorization, "Content-Type": "application/json" }, body: JSON.stringify({ title: text(article.title, 500), content: sanitizeArticleHtml(article.body_html), status: "draft", slug: text(article.slug, 180), excerpt: text(article.meta_description, 1000), categories: categoryId ? [categoryId] : [] }) });
+  return { updated: true, editUrl: `${base}/wp-admin/post.php?post=${postId}&action=edit` };
 }
 
 export async function getLiveWordPressCategories() {
