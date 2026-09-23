@@ -54,6 +54,11 @@ type ProductionInput = {
   wordpress_category_name?: unknown;
 };
 
+const IMAGE_MODEL = "gpt-image-2.5-sunburst";
+const IMAGE_SIZE = "2048x1152";
+const diagramPrompt = (source: string) =>
+  `次の内容を、記事読者が一目で理解できる日本語の情報図解にしてください。出力は厳密な16:9の横長構図です。\n\n図解する内容:\n${source}\n\n必須要件:\n- 本文の論点、因果関係、時系列、比較、手順、要素間の関係のうち、内容に最適な構造を選んで可視化する\n- 単なる人物の対談風景、背景画像、雰囲気写真、写実的な人物写真、装飾目的のイラスト、抽象的なコンセプトアートにはしない\n- 白または淡い背景、2〜4色、余白を十分に取り、シンプルで信頼感のある編集デザインにする\n- 矢印、ボックス、タイムライン、フロー、比較表などを使い、情報の階層と流れを明確にする\n- 画像内の文章は短い日本語ラベルだけに限定し、長文・ロゴ・透かし・架空の数値・本文にない事実を入れない\n- 文字は正確で読みやすく、端で切れないようにする\n- 16:9の範囲内に全要素を収める`;
+
 const asRecord = (value: unknown): Json =>
   value && typeof value === "object" && !Array.isArray(value)
     ? (value as Json)
@@ -235,7 +240,7 @@ async function generateArticle(
   index: number,
 ) {
   const focus = source.keywords[index % source.keywords.length] || source.title;
-  const prompt = `あなたは日本語SEO編集者です。次の動画一次情報だけを根拠に、重複しない記事${index + 1}本目を作成してください。動画にない数値・人物属性・効果・断定を補ってはいけません。主軸キーワードは「${focus}」。関連候補は ${source.keywords.slice(0, 10).join("、")}（取得元: ${source.provider}）。方向性: ${source.direction || "動画内容を忠実に整理"}\n\n動画タイトル: ${source.title}\n動画URL: ${source.url}\n文字起こし:\n${source.transcript.slice(0, 90000)}\n\nJSONオブジェクトだけを返してください。キーは title,titleTag,metaDescription,slug,mainKeyword,relatedKeywords,searchIntent,reader,angle,catchCopy,introductionHtml,sections,conclusionHtml。sectionsは3〜6件で、各要素は heading,html,imagePrompt,altText。headingはH2本文のみ（HTMLタグなし）、htmlはp/ul/ol/blockquote/strong/aだけを使う本文。本文には自然な要約・具体例・引用可能な発言・結論を含め、一次情報で確認できないことは書かない。metaDescriptionは90〜140字、titleTagは62字以内。imagePromptはそのH2の内容を正確に図解する日本語プロンプトで、文字・ロゴ・架空の数値を画像内に入れない。`;
+  const prompt = `あなたは日本語SEO編集者です。次の動画一次情報だけを根拠に、重複しない記事${index + 1}本目を作成してください。動画にない数値・人物属性・効果・断定を補ってはいけません。主軸キーワードは「${focus}」。関連候補は ${source.keywords.slice(0, 10).join("、")}（取得元: ${source.provider}）。方向性: ${source.direction || "動画内容を忠実に整理"}\n\n動画タイトル: ${source.title}\n動画URL: ${source.url}\n文字起こし:\n${source.transcript.slice(0, 90000)}\n\nJSONオブジェクトだけを返してください。キーは title,titleTag,metaDescription,slug,mainKeyword,relatedKeywords,searchIntent,reader,angle,catchCopy,introductionHtml,sections,conclusionHtml。sectionsは3〜6件で、各要素は heading,html,imagePrompt,altText。headingはH2本文のみ（HTMLタグなし）、htmlはp/ul/ol/blockquote/strong/aだけを使う本文。本文には自然な要約・具体例・引用可能な発言・結論を含め、一次情報で確認できないことは書かない。metaDescriptionは90〜140字、titleTagは62字以内。imagePromptには、そのH2本文を分析し、図解タイトル、3〜5個の短い日本語ラベル、各要素の関係、矢印の方向、最適な図解形式（フロー・時系列・比較・構造図など）を具体的に記述する。対談風景、背景画、人物写真、装飾イラストを指示せず、一次情報にない数値や事実も入れない。`;
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -273,7 +278,7 @@ function bodyHtml(article: GeneratedArticle, imageUrls: string[]) {
   const sections = article.sections
     .map(
       (section, index) =>
-        `<h2>${escapeHtml(section.heading)}</h2>${imageUrls[index + 1] ? `<figure><img src="${escapeHtml(imageUrls[index + 1])}" alt="${escapeHtml(section.altText)}" loading="lazy" decoding="async" /><figcaption>${escapeHtml(section.altText)}</figcaption></figure>` : ""}${section.html}`,
+        `<h2>${escapeHtml(section.heading)}</h2>${imageUrls[index + 1] ? `<figure class="seo-diagram"><img src="${escapeHtml(imageUrls[index + 1])}" alt="${escapeHtml(section.altText)}" width="1280" height="720" loading="lazy" decoding="async" style="display:block;width:100%;max-width:720px;height:auto;aspect-ratio:16/9;object-fit:cover;margin:0 auto" /><figcaption>${escapeHtml(section.altText)}</figcaption></figure>` : ""}${section.html}`,
     )
     .join("");
   return `${article.introductionHtml}${sections}${article.conclusionHtml}`;
@@ -310,13 +315,13 @@ async function generateImages(
       kind: "featured",
       heading: article.title,
       alt: `${article.title}のアイキャッチ画像`,
-      prompt: `日本語SEO記事「${article.title}」のアイキャッチ。主題は${article.mainKeyword}。清潔で信頼感のある横長の編集ビジュアル。画像内に文字、ロゴ、架空の数値、透かしを入れない。`,
+      prompt: `記事全体の要約図解。図解タイトルは「${article.mainKeyword}」。中心に主題を置き、周囲に「${article.sections.slice(0, 4).map((section) => section.heading).join("」「")}」の要点を短い日本語ラベルで配置し、記事全体の関係性が分かる構造図にする。`,
     },
     ...article.sections.map((section) => ({
       kind: "section",
       heading: section.heading,
       alt: section.altText,
-      prompt: `${section.imagePrompt}。記事セクション「${section.heading}」を直感的に理解できる横長の図解または編集イラスト。画像内に文字、ロゴ、架空の数値、透かしを入れない。`,
+      prompt: `${section.imagePrompt}。記事セクション「${section.heading}」の内容を、論点と関係性が一目で分かる情報図解にする。`,
     })),
   ].slice(0, count);
   const images: Array<{
@@ -329,36 +334,10 @@ async function generateImages(
   }> = [];
   for (let index = 0; index < prompts.length; index++) {
     const item = prompts[index],
-      response = await fetch("https://api.openai.com/v1/images/generations", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: "gpt-image-2",
-          prompt: item.prompt,
-          n: 1,
-          size: "1536x1024",
-          quality: "medium",
-          output_format: "png",
-        }),
-        signal: AbortSignal.timeout(110_000),
-      });
-    const payload = (await response.json().catch(() => ({}))) as Json,
-      data = Array.isArray(payload.data) ? payload.data.map(asRecord) : [],
-      encoded = text(data[0]?.b64_json, 20_000_000);
-    if (!response.ok || !encoded)
-      throw new Error(
-        text(
-          asRecord(payload.error).message ||
-            `画像生成APIエラー (${response.status})`,
-          240,
-        ),
-      );
+      bytes = await createImageBytes(apiKey, item.prompt);
     const imageId = id(),
       key = `articles/${articleId}/${item.kind}-${index}.png`;
-    await runtime().FILES.put(key, base64Bytes(encoded), {
+    await runtime().FILES.put(key, bytes, {
       httpMetadata: {
         contentType: "image/png",
         cacheControl: "public, max-age=31536000, immutable",
@@ -628,7 +607,7 @@ export async function regenerateArticleSection(
   if (!row) throw new Error("記事が見つかりません。");
   const apiKey = await getAnthropicApiKey();
   if (!apiKey) throw new Error("Claude APIを連携設定で接続してください。");
-  const prompt = `日本語SEO記事のH2セクションを再生成してください。動画の文字起こしだけを根拠にし、存在しない事実・数値・効果を追加しないでください。\n記事タイトル: ${text(row.title, 300)}\n主軸キーワード: ${text(row.main_keyword, 160)}\n対象H2: ${text(heading, 200)}\n現在の本文: ${text(currentHtml, 12000)}\n追加指示: ${text(instruction, 1000) || "読みやすく具体的に改善"}\n動画タイトル: ${text(row.youtube_title, 300)}\n動画URL: ${text(row.youtube_url, 1000)}\n文字起こし: ${text(row.transcript, 90000)}\nJSONだけを返してください。キーは heading,html,imagePrompt,altText。htmlはp,h3,ul,ol,blockquote,strong,aのみを使ってください。`;
+  const prompt = `日本語SEO記事のH2セクションを再生成してください。動画の文字起こしだけを根拠にし、存在しない事実・数値・効果を追加しないでください。\n記事タイトル: ${text(row.title, 300)}\n主軸キーワード: ${text(row.main_keyword, 160)}\n対象H2: ${text(heading, 200)}\n現在の本文: ${text(currentHtml, 12000)}\n追加指示: ${text(instruction, 1000) || "読みやすく具体的に改善"}\n動画タイトル: ${text(row.youtube_title, 300)}\n動画URL: ${text(row.youtube_url, 1000)}\n文字起こし: ${text(row.transcript, 90000)}\nJSONだけを返してください。キーは heading,html,imagePrompt,altText。htmlはp,h3,ul,ol,blockquote,strong,aのみを使ってください。imagePromptには本文を分析したうえで、図解タイトル、3〜5個の短い日本語ラベル、要素間の関係、矢印の方向、最適な図解形式を具体的に記述してください。対談風景・背景画・人物写真・装飾イラストは禁止です。`;
   const generated = await claudeJson(apiKey, prompt),
     value = generated.value;
   return {
@@ -648,11 +627,11 @@ async function createImageBytes(apiKey: string, prompt: string) {
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "gpt-image-2",
-        prompt,
+        model: IMAGE_MODEL,
+        prompt: diagramPrompt(prompt),
         n: 1,
-        size: "1536x1024",
-        quality: "medium",
+        size: IMAGE_SIZE,
+        quality: "high",
         output_format: "png",
       }),
       signal: AbortSignal.timeout(110_000),
@@ -679,7 +658,7 @@ function replaceSectionImage(
 ) {
   const headingText = escapeHtml(heading),
     marker = `<h2>${headingText}</h2>`,
-    image = `<figure><img src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async" /><figcaption>${escapeHtml(alt)}</figcaption></figure>`;
+    image = `<figure class="seo-diagram"><img src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" width="1280" height="720" loading="lazy" decoding="async" style="display:block;width:100%;max-width:720px;height:auto;aspect-ratio:16/9;object-fit:cover;margin:0 auto" /><figcaption>${escapeHtml(alt)}</figcaption></figure>`;
   const start = html.indexOf(marker);
   if (start < 0) return html;
   const contentStart = start + marker.length,
@@ -720,8 +699,8 @@ export async function regenerateArticleImage(
     prompt =
       text(options.prompt, 1200) ||
       (kind === "featured"
-        ? `記事「${article.title}」の主題を伝えるアイキャッチ画像`
-        : `H2「${heading}」の内容を分かりやすく図解する画像`),
+        ? `記事「${article.title}」の主題と主要論点を整理した全体構造図`
+        : `H2「${heading}」の論点・因果関係・流れを整理した情報図解`),
     imageId = id(),
     key = `articles/${articleId}/${kind}-${Date.now()}.png`,
     stamp = now();
@@ -729,7 +708,7 @@ export async function regenerateArticleImage(
     key,
     await createImageBytes(
       apiKey,
-      `${prompt}。日本語SEO記事向けの見やすい横長ビジュアル。画像内に文字、ロゴ、透かし、架空の数値を入れない。`,
+      prompt,
     ),
     {
       httpMetadata: {

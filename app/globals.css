@@ -439,10 +439,17 @@ textarea {
 }
 .wp-featured-media,
 .wp-section-media {
-  min-height: 220px;
+  width: 100%;
+  min-height: 0;
+  aspect-ratio: 16 / 9;
+  margin-right: auto;
+  margin-left: auto;
   overflow: hidden;
   border-radius: 4px;
-  background: #eef2f6 center / cover no-repeat;
+  background: #eef2f6 center / contain no-repeat;
+}
+.wp-featured-media {
+  max-width: 680px;
 }
 .wp-editor-section {
   padding: 40px 0 0;
@@ -496,6 +503,10 @@ textarea {
   margin: 0 0 1.35em;
   padding-left: 1.45em;
 }
+.wp-rendered-content figure,
+.wp-content-editable figure {
+  display: none;
+}
 .wp-content-editable {
   min-height: 130px;
   padding: 15px;
@@ -514,7 +525,7 @@ textarea {
   margin-left: auto;
 }
 .wp-section-media {
-  min-height: 170px;
+  max-width: 620px;
   margin-top: 13px;
 }
 .image-ai-settings,

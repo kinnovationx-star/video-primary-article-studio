@@ -59,3 +59,15 @@ test("article regeneration APIs and WordPress preview URL are persisted", async 
   assert.match(production, /preview=true/);
   assert.match(migration, /wordpress_preview_url/);
 });
+
+test("GPT Image 2.5 generates restrained 16:9 content diagrams", async () => {
+  const production = await readFile(new URL("lib/unified-production.ts", root), "utf8");
+  const styles = await readFile(new URL("app/globals.css", root), "utf8");
+  assert.match(production, /gpt-image-2\.5-sunburst/);
+  assert.match(production, /2048x1152/);
+  assert.match(production, /単なる人物の対談風景/);
+  assert.match(production, /図解タイトル、3〜5個の短い日本語ラベル/);
+  assert.doesNotMatch(production, /size: "1536x1024"/);
+  assert.match(styles, /aspect-ratio: 16 \/ 9/);
+  assert.match(styles, /max-width: 620px/);
+});

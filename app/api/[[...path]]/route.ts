@@ -67,7 +67,7 @@ const providers = [
   ["drive", "Google Drive", "資料・写真・議事録"],
   ["youtube", "YouTube", "動画・文字起こし"],
   ["anthropic", "Claude API", "記事生成・採点・分析"],
-  ["openai", "OpenAI GPT Image", "アイキャッチ・見出し画像"],
+  ["openai", "OpenAI GPT Image 2.5", "16:9・記事図解・H2図解"],
   ["wordpress", "WordPress", "下書き投稿・カテゴリ同期"],
   ["pagespeed", "PageSpeed Insights", "技術SEO"],
   ["notion", "Notion", "企画・下書き共有"],
