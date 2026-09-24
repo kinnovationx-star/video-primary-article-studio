@@ -446,6 +446,13 @@ function base64Bytes(value: string) {
   return bytes;
 }
 
+function bytesBase64(bytes: Uint8Array) {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000)
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  return btoa(binary);
+}
+
 const escapeXml = (value: unknown) =>
   String(value ?? "").replace(
     /[&<>"']/g,
@@ -483,6 +490,7 @@ async function applyExactFeaturedTypography(
       )
       .join(""),
     svg = `<svg xmlns="http://www.w3.org/2000/svg" width="2048" height="1152" viewBox="0 0 2048 1152">
+      <image href="data:${image.contentType};base64,${bytesBase64(image.bytes)}" x="0" y="0" width="2048" height="1152" preserveAspectRatio="xMidYMid slice"/>
       <style>
         .serif{font-family:'Noto Serif JP','Yu Mincho','Hiragino Mincho ProN',serif}.sans{font-family:'Noto Sans JP','Yu Gothic','Hiragino Kaku Gothic ProN',sans-serif}.headline{font-family:'Noto Serif JP','Yu Mincho','Hiragino Mincho ProN',serif;font-size:70px;font-weight:700;fill:#102b47}.meta{font-family:'Noto Sans JP','Yu Gothic','Hiragino Kaku Gothic ProN',sans-serif;fill:#102b47;font-weight:700}
       </style>
@@ -506,10 +514,7 @@ async function applyExactFeaturedTypography(
     ) as ArrayBuffer;
   try {
     const transformed = await images
-        .input(new Blob([imageBuffer], { type: image.contentType }).stream())
-        .draw(
-          new Blob([svg], { type: "image/svg+xml;charset=utf-8" }).stream(),
-        )
+        .input(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }).stream())
         .output({ format: "image/png" }),
       response = transformed.response();
     if (!response.ok)
@@ -519,8 +524,29 @@ async function applyExactFeaturedTypography(
       contentType: "image/png",
       extension: "png",
     };
-  } catch {
-    return image;
+  } catch (combinedError) {
+    try {
+      const transformed = await images
+          .input(new Blob([imageBuffer], { type: image.contentType }).stream())
+          .draw(
+            new Blob([svg], { type: "image/svg+xml;charset=utf-8" }).stream(),
+          )
+          .output({ format: "image/png" }),
+        response = transformed.response();
+      if (!response.ok)
+        throw new Error(`画像文字組みエラー (${response.status})`);
+      return {
+        bytes: new Uint8Array(await response.arrayBuffer()),
+        contentType: "image/png",
+        extension: "png",
+      };
+    } catch (drawError) {
+      console.error("featured typography overlay failed", {
+        combinedError: String(combinedError),
+        drawError: String(drawError),
+      });
+      return image;
+    }
   }
 }
 
