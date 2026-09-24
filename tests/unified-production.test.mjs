@@ -120,8 +120,11 @@ test("challenger reference image is required and stored independently", async ()
 
   assert.match(studio, /挑戦者本人の参照画像/);
   assert.match(studio, /accept="image\/jpeg,image\/png,image\/webp"/);
+  assert.match(studio, /アイキャッチと全H2画像を高画質で作り直す/);
+  assert.match(studio, /regenerateAllImages/);
   assert.match(route, /route === "challenger-reference"/);
   assert.match(route, /challenger-references\//);
+  assert.match(route, /UPDATE production_projects SET challenger_image_key=/);
   assert.match(production, /challengerReferenceImage/);
   assert.match(production, /画像2は挑戦者本人の参照写真/);
   assert.match(migration, /challenger_image_key/);

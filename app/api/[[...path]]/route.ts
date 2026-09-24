@@ -268,7 +268,7 @@ export async function GET(request: Request, context: Context) {
         await Promise.all([
           rows("SELECT * FROM production_projects ORDER BY updated_at DESC"),
           rows(
-            "SELECT * FROM articles WHERE batch_ready=1 ORDER BY updated_at DESC",
+            "SELECT a.*,p.challenger_image_key FROM articles a JOIN production_projects p ON p.id=a.project_id WHERE a.batch_ready=1 ORDER BY a.updated_at DESC",
           ),
           rows("SELECT * FROM uploaded_files ORDER BY created_at DESC"),
           workspace(),
@@ -331,23 +331,43 @@ export async function POST(request: Request, context: Context) {
       if (file.size > 12 * 1024 * 1024)
         return json({ error: "挑戦者画像は12MB以下にしてください。" }, 400);
       const referenceId = id(),
+        articleId = text(form.get("articleId"), 80),
         extension = file.type.toLowerCase().includes("png")
           ? "png"
           : file.type.toLowerCase().includes("webp")
             ? "webp"
             : "jpg",
         key = `challenger-references/${referenceId}/portrait.${extension}`;
+      let projectId = "";
+      if (articleId) {
+        const article = await runtime()
+          .DB.prepare("SELECT project_id FROM articles WHERE id=?")
+          .bind(articleId)
+          .first<{ project_id: string }>();
+        if (!article)
+          return json({ error: "対象の記事が見つかりません。" }, 404);
+        projectId = article.project_id;
+      }
       await runtime().FILES.put(key, file.stream(), {
         httpMetadata: {
           contentType: file.type,
           cacheControl: "private, max-age=0, no-store",
         },
       });
+      if (projectId) {
+        await runtime()
+          .DB.prepare(
+            "UPDATE production_projects SET challenger_image_key=?,updated_at=? WHERE id=?",
+          )
+          .bind(key, now(), projectId)
+          .run();
+      }
       return json(
         {
           reference: {
             id: referenceId,
             objectKey: key,
+            projectId,
             name: file.name,
             size: file.size,
           },

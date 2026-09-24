@@ -28,6 +28,7 @@ type Article = {
   featured_image_url?: string;
   section_images_json?: string;
   image_suggestions_json?: string;
+  challenger_image_key?: string;
   status: string;
   wordpress_status: string;
   wordpress_edit_url?: string;
@@ -1199,6 +1200,10 @@ function ArticleLibraryItem({
     [editingSection, setEditingSection] = useState(""),
     [saving, setSaving] = useState(false),
     [busyAction, setBusyAction] = useState(""),
+    [referenceReady, setReferenceReady] = useState(
+      Boolean(item.challenger_image_key),
+    ),
+    [referencePreview, setReferencePreview] = useState(""),
     [images, setImages] = useState<ArticleImage[]>([]),
     [instructions, setInstructions] = useState<Record<string, string>>({}),
     [imageSettings, setImageSettings] = useState<
@@ -1223,7 +1228,10 @@ function ArticleLibraryItem({
         }
       })();
   useEffect(() => {
-    const timer = window.setTimeout(() => setDraft(item), 0);
+    const timer = window.setTimeout(() => {
+      setDraft(item);
+      setReferenceReady(Boolean(item.challenger_image_key));
+    }, 0);
     return () => window.clearTimeout(timer);
   }, [item]);
   useEffect(() => {
@@ -1250,6 +1258,50 @@ function ArticleLibraryItem({
       ...current,
       body_html: combineArticleBody(intro, sections),
     }));
+  const uploadArticleReference = async (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.currentTarget.files?.[0];
+    if (!file) return;
+    if (!/^image\/(?:jpeg|png|webp)$/i.test(file.type)) {
+      setNotice("挑戦者画像はJPEG・PNG・WebPを使用してください。");
+      event.currentTarget.value = "";
+      return;
+    }
+    if (file.size > 12 * 1024 * 1024) {
+      setNotice("挑戦者画像は12MB以下にしてください。");
+      event.currentTarget.value = "";
+      return;
+    }
+    const form = new FormData();
+    form.append("file", file);
+    form.append("articleId", item.id);
+    setBusyAction("reference-upload");
+    progress.start("この記事の挑戦者本人画像を登録");
+    try {
+      const result = await api<{ notice: string }>(
+        "challenger-reference",
+        "POST",
+        form,
+      );
+      const reader = new FileReader();
+      reader.onload = () => setReferencePreview(String(reader.result || ""));
+      reader.readAsDataURL(file);
+      setReferenceReady(true);
+      setNotice(result.notice);
+      await refresh();
+      progress.complete(
+        "挑戦者本人の参照画像を保存し、全画像の高画質再生成が可能になりました",
+      );
+    } catch (error) {
+      const message = errorText(error);
+      setNotice(message);
+      progress.fail(message);
+      event.currentTarget.value = "";
+    } finally {
+      setBusyAction("");
+    }
+  };
   const save = async () => {
     setSaving(true);
     progress.start("記事の編集内容を保存");
@@ -1391,6 +1443,57 @@ function ArticleLibraryItem({
       setBusyAction("");
     }
   };
+  const regenerateAllImages = async () => {
+    if (!referenceReady) {
+      setNotice("先に挑戦者本人の参照画像を登録してください。");
+      return;
+    }
+    setBusyAction("all-images");
+    progress.start("アイキャッチと全H2画像をGPT Image 2で高画質再生成");
+    try {
+      await api(`articles/${item.id}/regenerate-image`, "POST", {
+        kind: "featured",
+        heading: "",
+        sectionIndex: 0,
+        prompt: featuredSettings.prompt,
+        altText: featuredSettings.alt,
+      });
+      for (let index = 0; index < parsed.sections.length; index += 1) {
+        const section = parsed.sections[index],
+          suggestion = suggestions[index],
+          setting = imageSettings[section.heading] || {
+            prompt:
+              suggestion?.prompt ||
+              `H2「${section.heading}」に対応する鮮明な動画内の対談場面`,
+            alt: suggestion?.alt || `${section.heading}の対談画像`,
+          };
+        await api(`articles/${item.id}/regenerate-image`, "POST", {
+          kind: "section",
+          heading: section.heading,
+          sectionIndex: index,
+          prompt: setting.prompt,
+          altText: setting.alt,
+        });
+      }
+      await refresh();
+      const refreshed = await api<{ images: ArticleImage[] }>(
+        `articles/${item.id}/images`,
+      );
+      setImages(refreshed.images);
+      setNotice(
+        `アイキャッチ1枚とH2画像${parsed.sections.length}枚を、挑戦者本人の参照画像を使って高画質に再生成しました。`,
+      );
+      progress.complete(
+        `全${parsed.sections.length + 1}枚のGPT Image 2生成とWordPress下書き反映が完了しました`,
+      );
+    } catch (error) {
+      const message = errorText(error);
+      setNotice(message);
+      progress.fail(message);
+    } finally {
+      setBusyAction("");
+    }
+  };
   const featuredSettings = imageSettings.featured || {
       prompt:
         "動画内の実写フレームから、出演者本人を明瞭に見せる経営者インタビューのファーストビューを作成",
@@ -1444,6 +1547,46 @@ function ArticleLibraryItem({
             <span>
               H2は手動編集とAI再生成の両方に対応します。保存すると記事ライブラリーとWordPress下書きを同時更新します。
             </span>
+          </section>
+          <section className="article-reference-panel">
+            <div>
+              <b>挑戦者本人の参照画像</b>
+              <span>
+                顔が鮮明な写真を登録すると、GPT Image
+                2が挑戦者を識別し、アイキャッチと全H2の対談画像で同じ本人を維持します。
+              </span>
+            </div>
+            <label>
+              本人画像を登録・変更
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                disabled={Boolean(busyAction)}
+                onChange={(event) => void uploadArticleReference(event)}
+              />
+            </label>
+            {referencePreview && (
+              <span className="challenger-reference-preview">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={referencePreview} alt="この記事の挑戦者本人参照画像" />
+                <b>挑戦者本人として登録済み</b>
+              </span>
+            )}
+            {referenceReady && !referencePreview && (
+              <span className="reference-status ready">
+                挑戦者本人の参照画像は登録済みです
+              </span>
+            )}
+            <button
+              type="button"
+              className="primary"
+              disabled={Boolean(busyAction) || !referenceReady}
+              onClick={() => void regenerateAllImages()}
+            >
+              {busyAction === "all-images"
+                ? "全画像を高画質再生成中…"
+                : "アイキャッチと全H2画像を高画質で作り直す"}
+            </button>
           </section>
           <article className="wp-article-canvas">
             <header className="wp-article-header">
