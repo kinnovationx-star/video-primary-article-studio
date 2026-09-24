@@ -862,7 +862,7 @@ function Studio({
             required
           />
           <small className="field-help">
-            1回の実行で、この本数の記事を自動生成します。
+            1回で最大5本（PART 1〜PART 5）を自動生成します。
           </small>
         </label>
         <label>
@@ -876,7 +876,7 @@ function Studio({
             required
           />
           <small className="field-help">
-            1枚目はYouTubeサムネイルを元に「A TRUTH STORY」とPART番号を加えた16:9アイキャッチ、2枚目以降は各H2の図解です。
+            1枚目は動画内の実写フレームから作る16:9ファーストビュー、2枚目以降は各H2に1枚までの実際の対談場面です。
           </small>
         </label>
         <label className="wide">
@@ -986,7 +986,7 @@ function Studio({
           </button>
         </div>
         <p className="field-help wide">
-          Claudeが動画概要・目次・文字起こしを照合して文章とSEO情報を作り、GPT Image 2.5 SunburstがYouTubeサムネイルのアイキャッチと16:9の情報図解を生成します。処理中は上部に進捗率を表示します。
+          Claudeが動画概要・目次・文字起こしを照合・校正し、登録した会社名・役職・出演者名を正本として文章とSEO情報を作ります。ファーストビューは動画内の実写フレームをGPT Image 2.5 Sunburstで編集し、各H2には動画内の対談場面を最大1枚配置します。処理中は上部に進捗率を表示します。
         </p>
       </form>
       <section className="studio-generated">
@@ -1313,8 +1313,8 @@ function ArticleLibraryItem({
   };
   const featuredSettings = imageSettings.featured || {
       prompt:
-        "YouTubeサムネイルの人物・日本語・構図をそのまま保持し、A TRUTH STORYとPART番号だけを追加",
-      alt: `${draft.title}｜A TRUTH STORYアイキャッチ`,
+        "動画内の実写フレームから、出演者本人を明瞭に見せる経営者インタビューのファーストビューを作成",
+      alt: `${draft.title}｜A TRUTH STORY ファーストビュー`,
     },
     featuredImage =
       images.find((image) => image.kind === "featured")?.url ||
@@ -1382,7 +1382,7 @@ function ArticleLibraryItem({
                 />
               )}
               <details className="image-ai-settings">
-                <summary>YouTubeサムネイル型アイキャッチを設定・AI再生成</summary>
+                <summary>動画内実写フレーム型ファーストビューを設定・AI再生成</summary>
                 <label>
                   画像の指示
                   <textarea
@@ -1447,7 +1447,7 @@ function ArticleLibraryItem({
                 setting = imageSettings[settingKey] || {
                   prompt:
                     suggestions[index]?.prompt ||
-                    `H2「${section.heading}」の論点・因果関係・流れを整理した情報図解`,
+                    `H2「${section.heading}」に対応する動画内の実際の対談場面`,
                   alt:
                     suggestions[index]?.alt || `${section.heading}の解説画像`,
                 },
@@ -1537,7 +1537,7 @@ function ArticleLibraryItem({
                       </button>
                       <div className="image-setting-grid">
                         <label>
-                          16:9図解の内容・構造
+                          取得する16:9動画場面の説明
                           <textarea
                             value={setting.prompt}
                             onChange={(event) =>
@@ -1576,8 +1576,8 @@ function ArticleLibraryItem({
                         }
                       >
                         {busyAction === `image-${settingKey}`
-                          ? "AI画像を生成中…"
-                          : "このH2画像をAIで再生成"}
+                          ? "動画内の場面を取得中…"
+                          : "このH2画像を動画から再取得"}
                       </button>
                     </div>
                   )}

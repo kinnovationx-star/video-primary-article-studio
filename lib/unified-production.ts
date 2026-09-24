@@ -44,6 +44,20 @@ type GeneratedArticle = {
   sections: Section[];
   conclusionHtml: string;
 };
+type ImageAsset = {
+  bytes: Uint8Array;
+  contentType: "image/png" | "image/jpeg";
+  extension: "png" | "jpg";
+};
+type VideoFrameAsset = ImageAsset & {
+  timestampSeconds: number;
+  sourceDescription: string;
+};
+type VideoCard = {
+  url: string;
+  thumbnailUrl: string;
+  title: string;
+};
 type ProductionInput = {
   youtube_url?: unknown;
   youtube_title?: unknown;
@@ -77,8 +91,14 @@ const brandEnglish = (value: unknown) =>
     .replace(/A\s+TRUE\s+STORY/gi, "A TRUTH STORY")
     .replace(/ア[・\s]?トゥルー(?:ス)?[・\s]?ストーリー/gi, "A TRUTH STORY")
     .replace(/トゥルース[・\s]?ストーリー/gi, "A TRUTH STORY");
-const diagramPrompt = (source: string) =>
-  `次の内容を、記事読者が一目で理解できる日本語の情報図解にしてください。出力は厳密な16:9の横長構図です。\n\n図解する内容:\n${source}\n\n必須要件:\n- 本文の論点、因果関係、時系列、比較、手順、要素間の関係のうち、内容に最適な構造を選んで可視化する\n- 単なる人物の対談風景、背景画像、雰囲気写真、写実的な人物写真、装飾目的のイラスト、抽象的なコンセプトアートにはしない\n- 白または淡い背景、2〜4色、余白を十分に取り、シンプルで信頼感のある編集デザインにする\n- 矢印、ボックス、タイムライン、フロー、比較表などを使い、情報の階層と流れを明確にする\n- 画像内の文章は短い日本語ラベルだけに限定し、長文・ロゴ・透かし・架空の数値・本文にない事実を入れない\n- 文字は正確で読みやすく、端で切れないようにする\n- 16:9の範囲内に全要素を収める`;
+const exactIdentity = (source: {
+  challengerCompany: string;
+  challengerRole: string;
+  challengerName: string;
+}) =>
+  [source.challengerCompany, source.challengerRole, source.challengerName]
+    .filter(Boolean)
+    .join(" ");
 
 const asRecord = (value: unknown): Json =>
   value && typeof value === "object" && !Array.isArray(value)
@@ -348,7 +368,8 @@ async function generateArticle(
   index: number,
 ) {
   const focus = source.keywords[index % source.keywords.length] || source.title;
-  const prompt = `あなたは日本語SEO編集者です。次の動画一次情報だけを根拠に、重複しない記事${index + 1}本目を作成してください。動画にない数値・人物属性・効果・断定を補ってはいけません。主軸キーワードは「${focus}」。関連候補は ${source.keywords.slice(0, 10).join("、")}（取得元: ${source.provider}）。方向性: ${source.direction || "動画内容を忠実に整理"}\n\n番組・ブランド表記ルール: 必ず英語の「A TRUTH STORY」と書き、カタカナ表記や「A TRUE STORY」は使わない。\n挑戦者: ${source.challengerCompany} / ${source.challengerRole} / ${source.challengerName}\nスペシャルゲスト（任意）: ${source.specialGuest || "なし"}\nMC（任意）: ${source.mcName || "なし"}\n動画タイトル: ${source.title}\n動画URL: ${source.url}\n動画概要（動画投稿者の記載）:\n${source.description.slice(0, 30000) || "取得なし"}\n動画目次・チャプター:\n${source.chapters.slice(0, 12000) || "取得なし"}\n文字起こし:\n${source.transcript.slice(0, 90000)}\n\n動画概要・目次・文字起こしを相互に照合し、概要と各チャプターの流れを記事構成へ反映すること。出演者を本文で紹介するときは、挑戦者を必ず「${source.challengerCompany} ${source.challengerRole} ${source.challengerName}」として扱う。任意出演者は値がある場合だけ記載する。\n\nJSONオブジェクトだけを返してください。キーは title,titleTag,metaDescription,slug,mainKeyword,relatedKeywords,searchIntent,reader,angle,catchCopy,introductionHtml,sections,conclusionHtml。sectionsは3〜6件で、各要素は heading,html,imagePrompt,altText。headingはH2本文のみ（HTMLタグなし）、htmlはp/ul/ol/blockquote/strong/aだけを使う本文。本文には自然な要約・具体例・引用可能な発言・結論を含め、一次情報で確認できないことは書かない。metaDescriptionは90〜140字、titleTagは62字以内。imagePromptには、そのH2本文を分析し、図解タイトル、3〜5個の短い日本語ラベル、各要素の関係、矢印の方向、最適な図解形式（フロー・時系列・比較・構造図など）を具体的に記述する。対談風景、背景画、人物写真、装飾イラストを指示せず、一次情報にない数値や事実も入れない。`;
+  const identity = exactIdentity(source);
+  const prompt = `あなたは校正能力の高い日本語SEO編集者です。次の動画一次情報だけを根拠に、重複しない記事${index + 1}本目（PART ${index + 1}）を作成してください。動画にない数値・人物属性・効果・断定を補ってはいけません。主軸キーワードは「${focus}」。関連候補は ${source.keywords.slice(0, 10).join("、")}（取得元: ${source.provider}）。方向性: ${source.direction || "動画内容を忠実に整理"}\n\n【最優先・固有名詞の正本】\n以下はユーザーが入力欄で登録した確定情報です。文字起こしより常に優先し、表記揺れを推測・補正・別漢字化してはいけません。記事内、SEO情報、画像指示のすべてで一字一句同じ表記を使ってください。\n会社名: ${source.challengerCompany}\n役職: ${source.challengerRole}\n出演者名: ${source.challengerName}\n正式な一組表記: ${identity}\nスペシャルゲスト（入力がある場合だけ使用）: ${source.specialGuest || "なし"}\nMC（入力がある場合だけ使用）: ${source.mcName || "なし"}\n番組名は必ず英語の「A TRUTH STORY」とし、カタカナ表記や「A TRUE STORY」は使いません。\n\n動画タイトル: ${source.title}\n動画URL: ${source.url}\n動画概要（動画投稿者の記載）:\n${source.description.slice(0, 30000) || "取得なし"}\n動画目次・チャプター:\n${source.chapters.slice(0, 12000) || "取得なし"}\n文字起こし（固有名詞は誤変換を含む可能性があるため正本に必ず合わせる）:\n${source.transcript.slice(0, 90000)}\n\n動画概要・目次・文字起こしを相互に照合し、概要と各チャプターの流れを記事構成へ反映してください。出演者を本文で紹介するときは必ず正式な一組表記「${identity}」を使い、文字起こし由来の別表記は使用しません。任意出演者は入力値がある場合だけ記載します。\n\nJSONオブジェクトだけを返してください。キーは title,titleTag,metaDescription,slug,mainKeyword,relatedKeywords,searchIntent,reader,angle,catchCopy,introductionHtml,sections,conclusionHtml。sectionsは3〜6件で、各要素は heading,html,imagePrompt,altText。headingはH2本文のみ（HTMLタグなし）、htmlはp/ul/ol/blockquote/strong/aだけを使う本文。本文には自然な要約・具体例・引用可能な発言・結論を含め、一次情報で確認できないことは書きません。metaDescriptionは90〜140字、titleTagは62字以内。imagePromptには、そのH2に対応する動画内の実際の対談場面として望ましい人物・構図・話題を簡潔に記述します。出力前に、誤字脱字、助詞、英語スペル、会社名、役職、出演者名、A TRUTH STORY表記を必ず再点検し、確定情報と異なる固有名詞をすべて修正してください。`;
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -379,17 +400,29 @@ async function generateArticle(
         .map((item) => String(item.text || ""))
         .join("\n")
     : "";
-  return normalizeArticle(jsonFromText(content), focus, index);
+  const article = normalizeArticle(jsonFromText(content), focus, index);
+  const profile = `<p class="video-speaker-profile"><strong>出演者：</strong>${escapeHtml(identity)}</p>`;
+  if (identity && !article.introductionHtml.includes(escapeHtml(identity)))
+    article.introductionHtml = `${profile}${article.introductionHtml}`;
+  return article;
 }
 
-function bodyHtml(article: GeneratedArticle, imageUrls: string[]) {
+function bodyHtml(
+  article: GeneratedArticle,
+  imageUrls: string[],
+  video?: VideoCard,
+) {
   const sections = article.sections
     .map(
       (section, index) =>
-        `<h2>${escapeHtml(section.heading)}</h2>${imageUrls[index + 1] ? `<figure class="seo-diagram"><img src="${escapeHtml(imageUrls[index + 1])}" alt="${escapeHtml(section.altText)}" width="1280" height="720" loading="lazy" decoding="async" style="display:block;width:100%;max-width:720px;height:auto;aspect-ratio:16/9;object-fit:cover;margin:0 auto" /><figcaption>${escapeHtml(section.altText)}</figcaption></figure>` : ""}${section.html}`,
+        `<h2>${escapeHtml(section.heading)}</h2>${imageUrls[index + 1] ? `<figure class="video-scene"><img src="${escapeHtml(imageUrls[index + 1])}" alt="${escapeHtml(section.altText)}" width="1280" height="720" loading="lazy" decoding="async" style="display:block;width:100%;max-width:720px;height:auto;aspect-ratio:16/9;object-fit:cover;margin:0 auto" /><figcaption>${escapeHtml(section.altText)}</figcaption></figure>` : ""}${section.html}`,
     )
     .join("");
-  return `${article.introductionHtml}${sections}${article.conclusionHtml}`;
+  const youtubeLink =
+    video?.url && video.thumbnailUrl
+      ? `<figure class="youtube-video-link" style="margin:40px auto 0;max-width:720px"><a href="${escapeHtml(video.url)}" target="_blank" rel="noopener noreferrer" aria-label="${escapeHtml(video.title)}をYouTubeで見る"><img src="${escapeHtml(video.thumbnailUrl)}" alt="${escapeHtml(video.title)}のYouTubeサムネイル" width="1280" height="720" loading="lazy" decoding="async" style="display:block;width:100%;height:auto;aspect-ratio:16/9;object-fit:cover" /></a><figcaption style="text-align:center"><a href="${escapeHtml(video.url)}" target="_blank" rel="noopener noreferrer">この動画をYouTubeで見る</a></figcaption></figure>`
+      : "";
+  return `${article.introductionHtml}${sections}${article.conclusionHtml}${youtubeLink}`;
 }
 
 function base64Bytes(value: string) {
@@ -410,6 +443,9 @@ async function generateImages(
     videoId: string;
     articleIndex: number;
     articleCount: number;
+    challengerCompany: string;
+    challengerRole: string;
+    challengerName: string;
   },
 ) {
   if (!apiKey)
@@ -421,6 +457,8 @@ async function generateImages(
         alt: string;
         key: string;
         url: string;
+        contentType: "image/png" | "image/jpeg";
+        extension: "png" | "jpg";
       }>,
       warning: "OpenAI未接続のため画像生成はスキップしました。",
     };
@@ -428,14 +466,14 @@ async function generateImages(
     {
       kind: "featured",
       heading: article.title,
-      alt: `${article.title}｜A TRUTH STORY${source.articleCount > 1 ? ` PART ${source.articleIndex + 1}` : ""}`,
-      prompt: `YouTubeサムネイルを元画像として保持し、番組名「A TRUTH STORY」${source.articleCount > 1 ? `と記事番号「PART ${source.articleIndex + 1}」` : ""}を加えたアイキャッチ画像`,
+      alt: `${article.title}｜${exactIdentity(source)}｜A TRUTH STORY PART ${source.articleIndex + 1}`,
+      prompt: `動画内の実写フレームを元に、${exactIdentity(source)}を正確に表記した経営者インタビューのファーストビュー画像（A TRUTH STORY / PART ${source.articleIndex + 1}）`,
     },
     ...article.sections.map((section) => ({
       kind: "section",
       heading: section.heading,
       alt: section.altText,
-      prompt: `${section.imagePrompt}。記事セクション「${section.heading}」の内容を、論点と関係性が一目で分かる情報図解にする。`,
+      prompt: `動画内の実際の対談場面。記事セクション「${section.heading}」に対応する実写フレーム（各セクション最大1枚）。`,
     })),
   ].slice(0, count);
   const images: Array<{
@@ -445,18 +483,30 @@ async function generateImages(
     alt: string;
     key: string;
     url: string;
+    contentType: "image/png" | "image/jpeg";
+    extension: "png" | "jpg";
   }> = [];
   for (let index = 0; index < prompts.length; index++) {
     const item = prompts[index],
-      bytes =
+      asset =
         item.kind === "featured"
-          ? await createFeaturedImageBytes(apiKey, source, article.title)
-          : await createImageBytes(apiKey, item.prompt);
+          ? await createFeaturedImageAsset(apiKey, source, article)
+          : await youtubeVideoFrame(
+              source.videoId,
+              Math.min(
+                0.95,
+                Math.max(
+                  0.05,
+                  (source.articleIndex + index / Math.max(2, prompts.length)) /
+                    Math.max(1, source.articleCount),
+                ),
+              ),
+            );
     const imageId = id(),
-      key = `articles/${articleId}/${item.kind}-${index}.png`;
-    await runtime().FILES.put(key, bytes, {
+      key = `articles/${articleId}/${item.kind}-${index}.${asset.extension}`;
+    await runtime().FILES.put(key, asset.bytes, {
       httpMetadata: {
-        contentType: "image/png",
+        contentType: asset.contentType,
         cacheControl: "public, max-age=31536000, immutable",
       },
     });
@@ -482,6 +532,8 @@ async function generateImages(
       alt: item.alt,
       key,
       url: `/api/media/${imageId}`,
+      contentType: asset.contentType,
+      extension: asset.extension,
     });
   }
   return { images, warning: "" };
@@ -506,6 +558,7 @@ async function publishDraft(
   html: string,
   categoryId: string,
   images: Awaited<ReturnType<typeof generateImages>>["images"],
+  video: VideoCard,
 ) {
   if (connection.authMode !== "rest")
     throw new Error(
@@ -526,8 +579,8 @@ async function publishDraft(
       method: "POST",
       headers: {
         Authorization: authorization,
-        "Content-Type": "image/png",
-        "Content-Disposition": `attachment; filename="${article.slug}-${index + 1}.png"`,
+        "Content-Type": image.contentType,
+        "Content-Disposition": `attachment; filename="${article.slug}-${index + 1}.${image.extension}"`,
       },
       body: await object.arrayBuffer(),
     });
@@ -555,7 +608,7 @@ async function publishDraft(
         .run();
     }
   }
-  const wpHtml = bodyHtml(article, uploadedUrls),
+  const wpHtml = bodyHtml(article, uploadedUrls, video),
     created = await wordpressRequest(`${base}/wp-json/wp/v2/posts`, {
       method: "POST",
       headers: {
@@ -717,14 +770,21 @@ export async function regenerateArticleSection(
 ) {
   const row = await runtime()
     .DB.prepare(
-      "SELECT a.title,a.main_keyword,p.youtube_title,p.youtube_url,p.transcript FROM articles a JOIN production_projects p ON p.id=a.project_id WHERE a.id=?",
+      "SELECT a.title,a.main_keyword,p.youtube_title,p.youtube_url,p.transcript,p.challenger_company,p.challenger_role,p.challenger_name FROM articles a JOIN production_projects p ON p.id=a.project_id WHERE a.id=?",
     )
     .bind(articleId)
     .first<Record<string, unknown>>();
   if (!row) throw new Error("記事が見つかりません。");
   const apiKey = await getAnthropicApiKey();
   if (!apiKey) throw new Error("Claude APIを連携設定で接続してください。");
-  const prompt = `日本語SEO記事のH2セクションを再生成してください。動画の文字起こしだけを根拠にし、存在しない事実・数値・効果を追加しないでください。\n記事タイトル: ${text(row.title, 300)}\n主軸キーワード: ${text(row.main_keyword, 160)}\n対象H2: ${text(heading, 200)}\n現在の本文: ${text(currentHtml, 12000)}\n追加指示: ${text(instruction, 1000) || "読みやすく具体的に改善"}\n動画タイトル: ${text(row.youtube_title, 300)}\n動画URL: ${text(row.youtube_url, 1000)}\n文字起こし: ${text(row.transcript, 90000)}\nJSONだけを返してください。キーは heading,html,imagePrompt,altText。htmlはp,h3,ul,ol,blockquote,strong,aのみを使ってください。imagePromptには本文を分析したうえで、図解タイトル、3〜5個の短い日本語ラベル、要素間の関係、矢印の方向、最適な図解形式を具体的に記述してください。対談風景・背景画・人物写真・装飾イラストは禁止です。`;
+  const identity = [
+      text(row.challenger_company, 240),
+      text(row.challenger_role, 160),
+      text(row.challenger_name, 160),
+    ]
+      .filter(Boolean)
+      .join(" "),
+    prompt = `日本語SEO記事のH2セクションを再生成してください。動画の文字起こしだけを根拠にし、存在しない事実・数値・効果を追加しないでください。\n記事タイトル: ${text(row.title, 300)}\n主軸キーワード: ${text(row.main_keyword, 160)}\n対象H2: ${text(heading, 200)}\n現在の本文: ${text(currentHtml, 12000)}\n追加指示: ${text(instruction, 1000) || "読みやすく具体的に改善"}\n動画タイトル: ${text(row.youtube_title, 300)}\n動画URL: ${text(row.youtube_url, 1000)}\n【固有名詞の正本】${identity}\n文字起こしに異なる漢字・表記があっても無視し、会社名・役職・氏名は必ず正本と一字一句同じにしてください。番組名は必ず「A TRUTH STORY」です。\n文字起こし: ${text(row.transcript, 90000)}\nJSONだけを返してください。キーは heading,html,imagePrompt,altText。htmlはp,h3,ul,ol,blockquote,strong,aのみを使ってください。imagePromptには対象H2に対応する動画内の実際の対談場面として望ましい話題と人物を簡潔に書いてください。出力前に誤字脱字、英語スペル、固有名詞を校正してください。`;
   const generated = await claudeJson(apiKey, prompt),
     value = generated.value;
   return {
@@ -734,37 +794,6 @@ export async function regenerateArticleSection(
     altText: text(value.altText, 180),
     provider: generated.model,
   };
-}
-
-async function createImageBytes(apiKey: string, prompt: string) {
-  const response = await fetch("https://api.openai.com/v1/images/generations", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: IMAGE_MODEL,
-        prompt: diagramPrompt(prompt),
-        n: 1,
-        size: IMAGE_SIZE,
-        quality: "high",
-        output_format: "png",
-      }),
-      signal: AbortSignal.timeout(110_000),
-    }),
-    payload = (await response.json().catch(() => ({}))) as Json,
-    data = Array.isArray(payload.data) ? payload.data.map(asRecord) : [],
-    encoded = text(data[0]?.b64_json, 20_000_000);
-  if (!response.ok || !encoded)
-    throw new Error(
-      text(
-        asRecord(payload.error).message ||
-          `画像生成APIエラー (${response.status})`,
-        240,
-      ),
-    );
-  return base64Bytes(encoded);
 }
 
 async function youtubeThumbnailBytes(thumbnailUrl: string, videoId: string) {
@@ -793,32 +822,151 @@ async function youtubeThumbnailBytes(thumbnailUrl: string, videoId: string) {
   throw new Error("YouTubeサムネイル画像を取得できませんでした。");
 }
 
-async function createFeaturedImageBytes(
+function decodeStoryboardSpec(value: string) {
+  try {
+    return JSON.parse(`"${value}"`) as string;
+  } catch {
+    return value.replace(/\\u0026/g, "&").replace(/\\\//g, "/");
+  }
+}
+
+async function youtubeVideoFrame(
+  videoId: string,
+  ratio: number,
+): Promise<VideoFrameAsset> {
+  try {
+    const watch = await fetch(
+      `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}&hl=ja`,
+      {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/128 Safari/537.36",
+          "Accept-Language": "ja,en;q=0.8",
+        },
+        signal: AbortSignal.timeout(25_000),
+      },
+    );
+    const html = await watch.text(),
+      match = html.match(
+        /"storyboards":\{"playerStoryboardSpecRenderer":\{"spec":"((?:\\.|[^"\\])*)"/,
+      );
+    if (!watch.ok || !match?.[1]) throw new Error("storyboard unavailable");
+    const parts = decodeStoryboardSpec(match[1]).split("|"),
+      base = parts[0],
+      levels = parts.slice(1);
+    if (!base || !levels.length) throw new Error("storyboard spec invalid");
+    const levelIndex = levels.length - 1,
+      fields = levels[levelIndex].split("#"),
+      width = Number(fields[0]),
+      height = Number(fields[1]),
+      count = Number(fields[2]),
+      columns = Number(fields[3]),
+      rows = Number(fields[4]),
+      intervalMs = Number(fields[5]),
+      nameTemplate = fields[6],
+      signature = fields.slice(7).join("#");
+    if (
+      !width ||
+      !height ||
+      !count ||
+      !columns ||
+      !rows ||
+      !nameTemplate ||
+      !signature
+    )
+      throw new Error("storyboard level invalid");
+    const safeRatio = Math.min(0.95, Math.max(0.05, ratio)),
+      frameIndex = Math.min(count - 1, Math.floor(count * safeRatio)),
+      perSheet = columns * rows,
+      sheetIndex = Math.floor(frameIndex / perSheet),
+      tileIndex = frameIndex % perSheet,
+      column = tileIndex % columns,
+      row = Math.floor(tileIndex / columns),
+      sheetName = nameTemplate.replace(/\$M/g, String(sheetIndex)),
+      sheetUrl = `${base.replace(/\$L/g, String(levelIndex)).replace(/\$N/g, sheetName)}&sigh=${signature}`,
+      top = row * height,
+      left = column * width,
+      right = columns * width - left - width,
+      bottom = rows * height - top - height,
+      response = await fetch(
+        sheetUrl,
+        {
+          cf: {
+            image: {
+              trim: { top, right, bottom, left },
+              width: 1280,
+              height: 720,
+              fit: "cover",
+              format: "jpeg",
+              quality: 90,
+              upscale: "generate",
+            },
+          },
+          signal: AbortSignal.timeout(45_000),
+        } as unknown as RequestInit,
+      );
+    const contentType = response.headers.get("content-type") || "";
+    if (!response.ok || !/image\/jpeg/i.test(contentType))
+      throw new Error("storyboard crop unavailable");
+    return {
+      bytes: new Uint8Array(await response.arrayBuffer()),
+      contentType: "image/jpeg",
+      extension: "jpg",
+      timestampSeconds: Math.round((frameIndex * intervalMs) / 1000),
+      sourceDescription: `動画内 ${Math.round((frameIndex * intervalMs) / 1000)} 秒の実写フレーム`,
+    };
+  } catch {
+    const thumbnail = await youtubeThumbnailBytes(
+      `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/maxresdefault.jpg`,
+      videoId,
+    );
+    return {
+      bytes: thumbnail.bytes,
+      contentType: "image/jpeg",
+      extension: "jpg",
+      timestampSeconds: 0,
+      sourceDescription: "動画フレーム取得不可のため公式YouTube画像を使用",
+    };
+  }
+}
+
+async function createFeaturedImageAsset(
   apiKey: string,
   source: {
-    thumbnailUrl: string;
     videoId: string;
     articleIndex: number;
     articleCount: number;
+    challengerCompany: string;
+    challengerRole: string;
+    challengerName: string;
   },
-  articleTitle: string,
-) {
-  const thumbnail = await youtubeThumbnailBytes(
-      source.thumbnailUrl,
+  article: Pick<GeneratedArticle, "title" | "catchCopy">,
+): Promise<ImageAsset> {
+  const frame = await youtubeVideoFrame(
       source.videoId,
+      (source.articleIndex + 0.5) / Math.max(1, source.articleCount),
     ),
-    part =
-      source.articleCount > 1 ? `PART ${source.articleIndex + 1}` : "",
+    part = `PART ${source.articleIndex + 1}`,
+    identity = exactIdentity(source),
+    headline = article.catchCopy || article.title,
     form = new FormData();
   form.append("model", IMAGE_MODEL);
   form.append(
     "prompt",
-    `これは新規生成ではなく、アップロードしたYouTubeサムネイルの最小編集です。元画像の写真、出演者全員の顔・表情・服装・姿勢、背景、色、照明、構図、トリミング、ロゴ、日本語の見出し、会社名、役職、氏名はすべて同じ位置のまま厳密に保持し、書き換えたり再構成したりしないでください。図解、イラスト、アイコン、新しい人物、新しい背景は絶対に追加しないでください。変更は2点だけです。1) 既存の英語表記を正確な大文字「A TRUTH STORY」にする。2) ${part ? `右上に元デザインと調和する小さなラベル「${part}」を追加する` : "PARTラベルは追加しない"}。「A TRUE STORY」、カタカナ、その他の英語は使わないでください。16:9の横長を維持し、記事「${articleTitle}」のアイキャッチとして元サムネイルとほぼ同一に見える結果にしてください。`,
+    `アップロード画像はYouTube動画内から取得した実際の対談フレームです。この実写フレームを写真素材として使い、経営者インタビュー記事の洗練されたファーストビュー画像を作ってください。厳密な16:9横長です。出演者本人の顔立ち、年齢、髪型、表情、服装、肌の色、本人性を変えず、架空の人物を追加しないでください。写真は自然で高品質に補正し、話している経営者または出演者が明瞭に見えるトリミングにします。暖かい白・ベージュを基調に、紺またはゴールドをアクセントにした信頼感のある日本語編集デザインにします。参考構成は、右側に実写人物、左側に読みやすい見出しパネルです。\n\n画像内に入れる文字は次の確定文字だけです。誤字、脱字、別漢字、勝手な省略を禁止します。\n「経営者インタビュー」\n「interview」\n「${headline}」\n「${source.challengerCompany}」\n「${source.challengerRole}」\n「${source.challengerName}」\n「A TRUTH STORY」\n「${part}」\n\n「A TRUE STORY」やカタカナの番組名、文字起こし由来の別名、偽ロゴ、透かし、余計なコピーは入れません。確定人物表記は「${identity}」です。すべての文字を画像端から十分離し、日本語の可読性とスペルを最終確認してください。`,
   );
   form.append(
     "image[]",
-    new Blob([thumbnail.bytes], { type: thumbnail.contentType }),
-    "youtube-thumbnail.jpg",
+    new Blob(
+      [
+        frame.bytes.buffer.slice(
+          frame.bytes.byteOffset,
+          frame.bytes.byteOffset + frame.bytes.byteLength,
+        ) as ArrayBuffer,
+      ],
+      { type: frame.contentType },
+    ),
+    `video-frame.${frame.extension}`,
   );
   form.append("n", "1");
   form.append("size", IMAGE_SIZE);
@@ -837,11 +985,15 @@ async function createFeaturedImageBytes(
     throw new Error(
       text(
         asRecord(payload.error).message ||
-          `サムネイル編集APIエラー (${response.status})`,
+          `ファーストビュー画像編集APIエラー (${response.status})`,
         240,
       ),
     );
-  return base64Bytes(encoded);
+  return {
+    bytes: base64Bytes(encoded),
+    contentType: "image/png",
+    extension: "png",
+  };
 }
 
 function replaceSectionImage(
@@ -852,7 +1004,7 @@ function replaceSectionImage(
 ) {
   const headingText = escapeHtml(heading),
     marker = `<h2>${headingText}</h2>`,
-    image = `<figure class="seo-diagram"><img src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" width="1280" height="720" loading="lazy" decoding="async" style="display:block;width:100%;max-width:720px;height:auto;aspect-ratio:16/9;object-fit:cover;margin:0 auto" /><figcaption>${escapeHtml(alt)}</figcaption></figure>`;
+    image = `<figure class="video-scene"><img src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" width="1280" height="720" loading="lazy" decoding="async" style="display:block;width:100%;max-width:720px;height:auto;aspect-ratio:16/9;object-fit:cover;margin:0 auto" /><figcaption>${escapeHtml(alt)}</figcaption></figure>`;
   const start = html.indexOf(marker);
   if (start < 0) return html;
   const contentStart = start + marker.length,
@@ -877,14 +1029,11 @@ export async function regenerateArticleImage(
 ) {
   const article = await runtime()
     .DB.prepare(
-      "SELECT a.*,p.youtube_url FROM articles a JOIN production_projects p ON p.id=a.project_id WHERE a.id=?",
+      "SELECT a.*,p.youtube_url,p.challenger_company,p.challenger_role,p.challenger_name FROM articles a JOIN production_projects p ON p.id=a.project_id WHERE a.id=?",
     )
     .bind(articleId)
     .first<Record<string, unknown>>();
   if (!article) throw new Error("記事が見つかりません。");
-  const apiKey = await getOpenAiApiKey();
-  if (!apiKey)
-    throw new Error("OpenAI GPT Imageを連携設定で接続してください。");
   const kind = options.kind === "featured" ? "featured" : "section",
     heading = text(options.heading, 200),
     altText =
@@ -895,41 +1044,60 @@ export async function regenerateArticleImage(
     prompt =
       text(options.prompt, 1200) ||
       (kind === "featured"
-        ? `YouTubeサムネイルを元画像として保持し、番組名「A TRUTH STORY」と記事番号を加えたアイキャッチ画像`
-        : `H2「${heading}」の論点・因果関係・流れを整理した情報図解`),
+        ? `動画内の実写フレームを使った経営者インタビューのファーストビュー画像`
+        : `H2「${heading}」に対応する動画内の実際の対談場面`),
     imageId = id(),
-    key = `articles/${articleId}/${kind}-${Date.now()}.png`,
-    stamp = now();
-  let bytes: Uint8Array;
-  if (kind === "featured") {
-    const videoId = youtubeVideoId(text(article.youtube_url, 1000));
-    if (!videoId)
-      throw new Error("元動画のYouTube URLからサムネイルを特定できません。");
-    const related = await runtime()
-      .DB.prepare(
-        "SELECT id FROM articles WHERE project_id=? ORDER BY rowid",
-      )
+    stamp = now(),
+    videoId = youtubeVideoId(text(article.youtube_url, 1000));
+  if (!videoId)
+    throw new Error("元動画のYouTube URLから動画フレームを特定できません。");
+  const related = await runtime()
+      .DB.prepare("SELECT id FROM articles WHERE project_id=? ORDER BY rowid")
       .bind(text(article.project_id, 80))
-      .all<{ id: string }>();
-    const articleIds = related.results.map((row) => row.id),
-      articleIndex = Math.max(0, articleIds.indexOf(articleId));
-    bytes = await createFeaturedImageBytes(
+      .all<{ id: string }>(),
+    articleIds = related.results.map((row) => row.id),
+    articleIndex = Math.max(0, articleIds.indexOf(articleId)),
+    articleCount = Math.max(1, articleIds.length);
+  let asset: ImageAsset;
+  if (kind === "featured") {
+    const apiKey = await getOpenAiApiKey();
+    if (!apiKey)
+      throw new Error("OpenAI GPT Imageを連携設定で接続してください。");
+    asset = await createFeaturedImageAsset(
       apiKey,
       {
         videoId,
-        thumbnailUrl: `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/maxresdefault.jpg`,
         articleIndex,
-        articleCount: Math.max(1, articleIds.length),
+        articleCount,
+        challengerCompany: text(article.challenger_company, 240),
+        challengerRole: text(article.challenger_role, 160),
+        challengerName: text(article.challenger_name, 160),
       },
-      text(article.title, 300),
+      {
+        title: text(article.title, 300),
+        catchCopy: text(article.catch_copy, 300),
+      },
     );
-  } else bytes = await createImageBytes(apiKey, prompt);
+  } else {
+    const sectionIndex = Math.max(0, Number(options.sectionIndex) || 0);
+    asset = await youtubeVideoFrame(
+      videoId,
+      Math.min(
+        0.95,
+        Math.max(
+          0.05,
+          (articleIndex + (sectionIndex + 1) / 7) / articleCount,
+        ),
+      ),
+    );
+  }
+  const key = `articles/${articleId}/${kind}-${Date.now()}.${asset.extension}`;
   await runtime().FILES.put(
     key,
-    bytes,
+    asset.bytes,
     {
       httpMetadata: {
-        contentType: "image/png",
+        contentType: asset.contentType,
         cacheControl: "public, max-age=31536000, immutable",
       },
     },
@@ -956,8 +1124,8 @@ export async function regenerateArticleImage(
         method: "POST",
         headers: {
           Authorization: authorization,
-          "Content-Type": "image/png",
-          "Content-Disposition": `attachment; filename="${text(article.slug, 120) || "article"}-${kind}-${Date.now()}.png"`,
+          "Content-Type": asset.contentType,
+          "Content-Disposition": `attachment; filename="${text(article.slug, 120) || "article"}-${kind}-${Date.now()}.${asset.extension}"`,
         },
         body: await object.arrayBuffer(),
       });
@@ -1280,7 +1448,12 @@ export async function createUnifiedProduction(
             stamp,
           )
           .run();
-        const initialHtml = bodyHtml(generated, []),
+        const videoCard: VideoCard = {
+            url,
+            thumbnailUrl: metadata.thumbnailUrl,
+            title,
+          },
+          initialHtml = bodyHtml(generated, [], videoCard),
           evidence = JSON.stringify([
             {
               source: url,
@@ -1350,6 +1523,9 @@ export async function createUnifiedProduction(
               videoId: metadata.videoId,
               articleIndex: index,
               articleCount,
+              challengerCompany,
+              challengerRole,
+              challengerName,
             }),
           2,
         );
@@ -1364,6 +1540,7 @@ export async function createUnifiedProduction(
           finalHtml = bodyHtml(
             generated,
             imageResult.images.map((image) => image.url),
+            videoCard,
           );
         if (wordpress) {
           const posted = await retry(
@@ -1374,6 +1551,7 @@ export async function createUnifiedProduction(
                 finalHtml,
                 categoryId,
                 imageResult.images,
+                videoCard,
               ),
             2,
           );

@@ -45,7 +45,7 @@ test("generated article cards stay below the studio form and expose AI editing",
   const source = await readFile(new URL("app/seo-loop-app.tsx", root), "utf8");
   assert.match(source, /<Library[\s\S]*embedded/);
   assert.match(source, /このH2本文をAIで再生成/);
-  assert.match(source, /このH2画像をAIで再生成/);
+  assert.match(source, /このH2画像を動画から再取得/);
   assert.match(source, /アイキャッチ画像をAIで再生成/);
   assert.match(source, /WordPress下書きを閲覧/);
 });
@@ -60,19 +60,20 @@ test("article regeneration APIs and WordPress preview URL are persisted", async 
   assert.match(migration, /wordpress_preview_url/);
 });
 
-test("GPT Image 2.5 generates restrained 16:9 content diagrams", async () => {
+test("video frames and GPT Image 2.5 create 16:9 editorial visuals", async () => {
   const production = await readFile(new URL("lib/unified-production.ts", root), "utf8");
   const styles = await readFile(new URL("app/globals.css", root), "utf8");
   assert.match(production, /gpt-image-2\.5-sunburst/);
   assert.match(production, /2048x1152/);
-  assert.match(production, /単なる人物の対談風景/);
-  assert.match(production, /図解タイトル、3〜5個の短い日本語ラベル/);
+  assert.match(production, /storyboard3|playerStoryboardSpecRenderer/);
+  assert.match(production, /trim: \{ top, right, bottom, left \}/);
+  assert.match(production, /動画内から取得した実際の対談フレーム/);
   assert.doesNotMatch(production, /size: "1536x1024"/);
   assert.match(styles, /aspect-ratio: 16 \/ 9/);
   assert.match(styles, /max-width: 620px/);
 });
 
-test("YouTube metadata, cast fields, and thumbnail-based PART covers are wired end to end", async () => {
+test("YouTube frames, canonical cast fields, PART 1-5, and end-video links are wired end to end", async () => {
   const studio = await readFile(new URL("app/seo-loop-app.tsx", root), "utf8");
   const production = await readFile(new URL("lib/unified-production.ts", root), "utf8");
   const route = await readFile(new URL("app/api/[[...path]]/route.ts", root), "utf8");
@@ -94,10 +95,13 @@ test("YouTube metadata, cast fields, and thumbnail-based PART covers are wired e
   assert.match(production, /v1\/images\/edits/);
   assert.match(production, /image\[\]/);
   assert.match(production, /quality", "max"/);
-  assert.match(production, /図解、イラスト、アイコン/);
-  assert.match(production, /変更は2点だけ/);
+  assert.match(production, /固有名詞の正本/);
+  assert.match(production, /文字起こし由来の別名/);
+  assert.match(production, /youtube-video-link/);
+  assert.match(production, /この動画をYouTubeで見る/);
   assert.match(production, /A TRUTH STORY/);
   assert.match(production, /PART \$\{source\.articleIndex \+ 1\}/);
+  assert.match(production, /Math\.min\(5, Math\.max\(1/);
   assert.match(migration, /youtube_description/);
   assert.match(migration, /youtube_chapters/);
   assert.match(migration, /challenger_role/);
