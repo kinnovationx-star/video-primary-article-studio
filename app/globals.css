@@ -428,16 +428,31 @@ textarea {
 .library-editor-summary small {
   color: var(--muted);
 }
+.wordpress-public-preview {
+  display: grid;
+  gap: 6px;
+  width: min(100%, 760px);
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid #bfd6ff;
+  border-radius: 10px;
+  background: #eef5ff;
+}
+.wordpress-public-preview > b {
+  color: #26435f;
+}
 .wordpress-card-link {
   display: flex;
   width: fit-content;
-  margin-top: 12px;
+  max-width: 100%;
   padding: 9px 14px;
   border-radius: 8px;
   background: #e5efff;
   color: var(--blue);
   font-weight: 900;
   text-decoration: none;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 .wordpress-card-link:hover {
   background: #d6e6ff;

@@ -32,6 +32,7 @@ import {
   latestAutomatedSeoReport,
 } from "../../../lib/automated-seo-report";
 import {
+  backfillWordPressPublicPreviews,
   createUnifiedProduction,
   getArticleImage,
   getArticleImages,
@@ -420,6 +421,15 @@ export async function POST(request: Request, context: Context) {
       );
     }
     const body = await input(request);
+    if (route === "wordpress/public-previews/backfill") {
+      const result = await backfillWordPressPublicPreviews();
+      return json({
+        result,
+        notice: result.updatedCount
+          ? `${result.updatedCount}本の記事で「外部確認を許可する」を有効化し、共有URLを発行しました。`
+          : "すべてのWordPress下書きに外部確認URLが設定済みです。",
+      });
+    }
     if (route === "productions") {
       const production = await createUnifiedProduction(body, request);
       return json(
@@ -1031,11 +1041,14 @@ export async function PATCH(request: Request, context: Context) {
         const synced = await updateWordPressDraft(article);
         await runtime()
           .DB.prepare(
-            "UPDATE articles SET wordpress_status='DRAFT',wordpress_edit_url=?,wordpress_preview_url=?,updated_at=? WHERE id=?",
+            "UPDATE articles SET wordpress_status='DRAFT',wordpress_edit_url=?,wordpress_preview_url=?,wordpress_public_preview_url=?,updated_at=? WHERE id=?",
           )
           .bind(
             synced.editUrl || article.wordpress_edit_url || "",
             synced.previewUrl || article.wordpress_preview_url || "",
+            synced.publicPreviewUrl ||
+              article.wordpress_public_preview_url ||
+              "",
             now(),
             path[1],
           )

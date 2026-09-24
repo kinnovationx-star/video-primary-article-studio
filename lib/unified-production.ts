@@ -751,16 +751,212 @@ async function generateImages(
 }
 
 async function wordpressRequest(url: string, init: RequestInit) {
+  const { response, payload } = await wordpressFetchJson(url, init),
+    record = asRecord(payload);
+  if (!response.ok)
+    throw new Error(
+      text(
+        record.message || `WordPress APIエラー (${response.status})`,
+        240,
+      ),
+    );
+  return record;
+}
+
+async function wordpressFetchJson(url: string, init: RequestInit) {
   const response = await fetch(url, {
       ...init,
       signal: AbortSignal.timeout(60_000),
     }),
-    payload = (await response.json().catch(() => ({}))) as Json;
-  if (!response.ok)
-    throw new Error(
-      text(payload.message || `WordPress APIエラー (${response.status})`, 240),
+    payload = (await response.json().catch(() => ({}))) as unknown;
+  return { response, payload };
+}
+
+const PUBLIC_PREVIEW_BRIDGE_NAME =
+  "Video Primary Article Public Preview Bridge";
+const PUBLIC_PREVIEW_BRIDGE_CODE = String.raw`
+if ( ! function_exists( 'video_primary_article_register_public_preview_route' ) ) {
+	function video_primary_article_register_public_preview_route() {
+		register_rest_route(
+			'video-primary-article/v1',
+			'/public-preview/(?P<id>\d+)',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => function ( $request ) {
+					return current_user_can( 'edit_post', absint( $request['id'] ) );
+				},
+				'callback'            => function ( $request ) {
+					$post_id = absint( $request['id'] );
+					$post    = get_post( $post_id );
+					if ( ! $post ) {
+						return new WP_Error( 'video_primary_article_missing_post', '記事が見つかりません。', array( 'status' => 404 ) );
+					}
+					if ( ! class_exists( 'DS_Public_Post_Preview' ) ) {
+						return new WP_Error( 'video_primary_article_missing_ppp', 'Public Post Preview プラグインを有効化してください。', array( 'status' => 424 ) );
+					}
+					if ( in_array( $post->post_status, array( 'publish', 'private', 'trash' ), true ) ) {
+						return new WP_Error( 'video_primary_article_invalid_status', '外部確認URLは下書きまたは非公開記事のみ発行できます。', array( 'status' => 409 ) );
+					}
+					$post_ids = array_map( 'absint', (array) get_option( 'public_post_preview', array() ) );
+					if ( ! in_array( $post_id, $post_ids, true ) ) {
+						$post_ids[] = $post_id;
+						update_option( 'public_post_preview', array_values( array_unique( $post_ids ) ) );
+					}
+					$preview_url = DS_Public_Post_Preview::get_preview_link( $post );
+					return rest_ensure_response(
+						array(
+							'enabled'     => true,
+							'post_id'     => $post_id,
+							'preview_url' => esc_url_raw( $preview_url ),
+						)
+					);
+				},
+			)
+		);
+	}
+	add_action( 'rest_api_init', 'video_primary_article_register_public_preview_route' );
+}
+`.trim();
+
+type WordPressConnection = NonNullable<
+  Awaited<ReturnType<typeof getWordPressConnection>>
+>;
+
+const wordpressJsonHeaders = (connection: WordPressConnection) => ({
+  Authorization: wordpressAuth(
+    connection.username,
+    connection.applicationPassword,
+  ),
+  "Content-Type": "application/json",
+});
+
+async function installPublicPreviewBridge(connection: WordPressConnection) {
+  const base = wordpressBase(connection.siteUrl),
+    headers = wordpressJsonHeaders(connection),
+    listed = await wordpressFetchJson(
+      `${base}/wp-json/code-snippets/v1/snippets?status=all&per_page=100`,
+      { headers },
     );
-  return payload;
+  if (!listed.response.ok) {
+    const detail = asRecord(listed.payload);
+    throw new Error(
+      text(
+        detail.message ||
+          "WordPressのCode Snippets REST APIを利用できません。Code Snippetsを有効化してください。",
+        300,
+      ),
+    );
+  }
+  const snippets = Array.isArray(listed.payload)
+      ? listed.payload.map(asRecord)
+      : [],
+    current = snippets.find(
+      (snippet) => text(snippet.name, 200) === PUBLIC_PREVIEW_BRIDGE_NAME,
+    );
+  let snippetId = Number(current?.id || 0),
+    active = Boolean(current?.active);
+  const snippet = {
+    name: PUBLIC_PREVIEW_BRIDGE_NAME,
+    desc: "記事生成後にPublic Post Previewの外部確認URLを安全に発行する連携ブリッジ。",
+    code: PUBLIC_PREVIEW_BRIDGE_CODE,
+    tags: ["video-primary-article", "public-post-preview"],
+    scope: "global",
+    priority: 10,
+    active,
+  };
+  if (snippetId) {
+    const updated = await wordpressFetchJson(
+      `${base}/wp-json/code-snippets/v1/snippets/${snippetId}`,
+      { method: "POST", headers, body: JSON.stringify(snippet) },
+    );
+    if (!updated.response.ok)
+      throw new Error(
+        text(
+          asRecord(updated.payload).message ||
+            "WordPress外部確認ブリッジを更新できませんでした。",
+          300,
+        ),
+      );
+    active = Boolean(asRecord(updated.payload).active);
+  } else {
+    const created = await wordpressFetchJson(
+      `${base}/wp-json/code-snippets/v1/snippets`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ ...snippet, active: false }),
+      },
+    );
+    if (!created.response.ok)
+      throw new Error(
+        text(
+          asRecord(created.payload).message ||
+            "WordPress外部確認ブリッジを作成できませんでした。",
+          300,
+        ),
+      );
+    snippetId = Number(asRecord(created.payload).id || 0);
+    active = false;
+  }
+  if (!snippetId)
+    throw new Error(
+      "WordPress外部確認ブリッジのIDを取得できませんでした。",
+    );
+  if (!active) {
+    const activated = await wordpressFetchJson(
+      `${base}/wp-json/code-snippets/v1/snippets/${snippetId}/activate`,
+      { method: "POST", headers, body: "{}" },
+    );
+    if (!activated.response.ok)
+      throw new Error(
+        text(
+          asRecord(activated.payload).message ||
+            "WordPress外部確認ブリッジを有効化できませんでした。",
+          300,
+        ),
+      );
+  }
+}
+
+async function requestPublicPreview(
+  connection: WordPressConnection,
+  postId: string,
+) {
+  const base = wordpressBase(connection.siteUrl),
+    result = await wordpressFetchJson(
+      `${base}/wp-json/video-primary-article/v1/public-preview/${encodeURIComponent(postId)}`,
+      {
+        method: "POST",
+        headers: wordpressJsonHeaders(connection),
+        body: "{}",
+      },
+    );
+  return {
+    status: result.response.status,
+    payload: asRecord(result.payload),
+  };
+}
+
+async function enableWordPressPublicPreview(
+  connection: WordPressConnection,
+  postId: string,
+) {
+  if (!postId) throw new Error("WordPress記事IDがありません。");
+  let result = await requestPublicPreview(connection, postId);
+  if (result.status === 404) {
+    await installPublicPreviewBridge(connection);
+    result = await requestPublicPreview(connection, postId);
+  }
+  const previewUrl = text(result.payload.preview_url, 2000);
+  if (result.status < 200 || result.status >= 300 || !previewUrl)
+    throw new Error(
+      text(
+        result.payload.message ||
+          `WordPress外部確認URLを発行できませんでした (${result.status})。`,
+        300,
+      ),
+    );
+  return previewUrl;
 }
 
 async function publishDraft(
@@ -858,6 +1054,7 @@ export async function updateWordPressDraft(article: Record<string, unknown>) {
       reason: "WordPress下書き未連携",
       editUrl: "",
       previewUrl: "",
+      publicPreviewUrl: "",
     };
   if (connection.authMode !== "rest")
     throw new Error("WordPress下書きの更新にはREST API接続が必要です。");
@@ -882,11 +1079,60 @@ export async function updateWordPressDraft(article: Record<string, unknown>) {
       categories: categoryId ? [categoryId] : [],
     }),
   });
+  const publicPreviewUrl = await retry(
+    () => enableWordPressPublicPreview(connection, postId),
+    3,
+  );
   return {
     updated: true,
     editUrl: `${base}/wp-admin/post.php?post=${postId}&action=edit`,
     previewUrl: `${base}/?p=${postId}&preview=true`,
+    publicPreviewUrl,
   };
+}
+
+export async function backfillWordPressPublicPreviews() {
+  const connection = await getWordPressConnection();
+  if (!connection || connection.authMode !== "rest")
+    throw new Error(
+      "外部確認URLの発行にはWordPress REST API接続が必要です。",
+    );
+  const result = await runtime()
+      .DB.prepare(
+        "SELECT id,title,wordpress_post_id FROM articles WHERE wordpress_status='DRAFT' AND wordpress_post_id<>'' AND wordpress_public_preview_url='' ORDER BY updated_at DESC LIMIT 40",
+      )
+      .all<{
+        id: string;
+        title: string;
+        wordpress_post_id: string;
+      }>(),
+    updated: Array<{
+      id: string;
+      title: string;
+      publicPreviewUrl: string;
+    }> = [];
+  for (const article of result.results) {
+    const publicPreviewUrl = await retry(
+      () =>
+        enableWordPressPublicPreview(
+          connection,
+          text(article.wordpress_post_id, 80),
+        ),
+      3,
+    );
+    await runtime()
+      .DB.prepare(
+        "UPDATE articles SET wordpress_public_preview_url=?,updated_at=? WHERE id=?",
+      )
+      .bind(publicPreviewUrl, now(), article.id)
+      .run();
+    updated.push({
+      id: article.id,
+      title: text(article.title, 500),
+      publicPreviewUrl,
+    });
+  }
+  return { updatedCount: updated.length, articles: updated };
 }
 
 export async function getLiveWordPressCategories() {
@@ -1623,6 +1869,7 @@ export async function createUnifiedProduction(
     title: string;
     wordpress_status: string;
     wordpress_preview_url: string;
+    wordpress_public_preview_url: string;
     wordpress_edit_url: string;
     image_count: number;
   };
@@ -1635,7 +1882,7 @@ export async function createUnifiedProduction(
     previous = resumableProject
       ? await runtime()
           .DB.prepare(
-            "SELECT a.id,a.title,a.wordpress_status,a.wordpress_preview_url,a.wordpress_edit_url,(SELECT COUNT(*) FROM article_images i WHERE i.article_id=a.id) AS image_count FROM articles a WHERE a.project_id=? ORDER BY a.rowid",
+            "SELECT a.id,a.title,a.wordpress_status,a.wordpress_preview_url,a.wordpress_public_preview_url,a.wordpress_edit_url,(SELECT COUNT(*) FROM article_images i WHERE i.article_id=a.id) AS image_count FROM articles a WHERE a.project_id=? ORDER BY a.rowid",
           )
           .bind(resumableProject.id)
           .all<ResumeRow>()
@@ -1648,9 +1895,7 @@ export async function createUnifiedProduction(
           Number(article.image_count) >= imageCount &&
           (!wordpress ||
             (article.wordpress_status === "DRAFT" &&
-              Boolean(
-                article.wordpress_preview_url || article.wordpress_edit_url,
-              ))),
+              Boolean(article.wordpress_public_preview_url))),
       ),
     projectId = canResume ? resumableProject!.id : id(),
     resumeRows = canResume ? previous.results : [];
@@ -1720,6 +1965,7 @@ export async function createUnifiedProduction(
       wordpressStatus: string;
       imageCount: number;
       wordpressPreviewUrl: string;
+      wordpressPublicPreviewUrl: string;
       wordpressEditUrl: string;
     }> = [],
     warnings: string[] = [];
@@ -1730,6 +1976,7 @@ export async function createUnifiedProduction(
       wordpressStatus: article.wordpress_status,
       imageCount: Number(article.image_count),
       wordpressPreviewUrl: article.wordpress_preview_url,
+      wordpressPublicPreviewUrl: article.wordpress_public_preview_url,
       wordpressEditUrl: article.wordpress_edit_url,
     })),
   );
@@ -1874,6 +2121,7 @@ export async function createUnifiedProduction(
           );
         let wordpressStatus = "NOT_SENT",
           wordpressPreviewUrl = "",
+          wordpressPublicPreviewUrl = "",
           wordpressEditUrl = "",
           finalHtml = bodyHtml(
             generated,
@@ -1897,13 +2145,21 @@ export async function createUnifiedProduction(
             throw new Error(
               `「${generated.title}」のWordPress下書きURLを取得できませんでした。`,
             );
+          wordpressPublicPreviewUrl = await retry(
+            () => enableWordPressPublicPreview(wordpress, posted.postId),
+            3,
+          );
+          if (!wordpressPublicPreviewUrl)
+            throw new Error(
+              `「${generated.title}」の外部確認URLを発行できませんでした。`,
+            );
           wordpressStatus = "DRAFT";
           wordpressPreviewUrl = posted.previewUrl;
           wordpressEditUrl = posted.editUrl;
           finalHtml = posted.html;
           await runtime()
             .DB.prepare(
-              "UPDATE articles SET body_html=?,featured_image_url=?,section_images_json=?,wordpress_post_id=?,wordpress_edit_url=?,wordpress_preview_url=?,wordpress_status=?,updated_at=? WHERE id=?",
+              "UPDATE articles SET body_html=?,featured_image_url=?,section_images_json=?,wordpress_post_id=?,wordpress_edit_url=?,wordpress_preview_url=?,wordpress_public_preview_url=?,wordpress_status=?,updated_at=? WHERE id=?",
             )
             .bind(
               finalHtml,
@@ -1912,6 +2168,7 @@ export async function createUnifiedProduction(
               posted.postId,
               posted.editUrl,
               posted.previewUrl,
+              wordpressPublicPreviewUrl,
               wordpressStatus,
               now(),
               articleId,
@@ -1938,6 +2195,7 @@ export async function createUnifiedProduction(
           wordpressStatus,
           imageCount: imageResult.images.length,
           wordpressPreviewUrl,
+          wordpressPublicPreviewUrl,
           wordpressEditUrl,
         };
         },

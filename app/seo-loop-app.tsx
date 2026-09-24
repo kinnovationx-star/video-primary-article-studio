@@ -33,6 +33,7 @@ type Article = {
   wordpress_status: string;
   wordpress_edit_url?: string;
   wordpress_preview_url?: string;
+  wordpress_public_preview_url?: string;
   updated_at: string;
 };
 type ArticleImage = {
@@ -413,6 +414,7 @@ export function SeoLoopApp() {
           articles: Array<{
             id: string;
             wordpressPreviewUrl: string;
+            wordpressPublicPreviewUrl: string;
             wordpressEditUrl: string;
           }>;
           warnings: string[];
@@ -426,11 +428,11 @@ export function SeoLoopApp() {
       if (
         Boolean(body.wordpress_category_id) &&
         data.production.articles.some(
-          (article) => !article.wordpressPreviewUrl && !article.wordpressEditUrl,
+          (article) => !article.wordpressPublicPreviewUrl,
         )
       )
         throw new Error(
-          "WordPress下書きURLを確認できない記事があります。100%にはせず、記事カードも確定しません。",
+          "WordPressの外部確認URLを発行できていない記事があります。100%にはせず、記事カードも確定しません。",
         );
       const [base, board] = await Promise.all([
         api<{ articles: Article[]; integrations: Integration[] }>("bootstrap"),
@@ -451,7 +453,7 @@ export function SeoLoopApp() {
       setDashboard(board);
       setNotice(data.notice);
       actionProgress.complete(
-        `${requestedCount}本の記事生成・画像保存・WordPress下書きURL取得・記事カード反映がすべて完了しました`,
+        `${requestedCount}本の記事生成・画像保存・WordPress外部確認URL発行・記事カード反映がすべて完了しました`,
       );
     } catch (error) {
       const message = errorText(error);
@@ -495,9 +497,7 @@ export function SeoLoopApp() {
               created.every(
                 (article) =>
                   !body.wordpress_category_id ||
-                  Boolean(
-                    article.wordpress_preview_url || article.wordpress_edit_url,
-                  ),
+                  Boolean(article.wordpress_public_preview_url),
               )
             ) {
               const board = await api<Dashboard>("dashboard");
@@ -505,10 +505,10 @@ export function SeoLoopApp() {
               setIntegrations(base.integrations);
               setDashboard(board);
               setNotice(
-                `${requestedCount}本の記事・画像・WordPress下書きが完成しました。`,
+                `${requestedCount}本の記事・画像・WordPress下書き・外部確認URLが完成しました。`,
               );
               actionProgress.complete(
-                `${requestedCount}本の記事生成・画像保存・WordPress下書きURL取得・記事カード反映がすべて完了しました`,
+                `${requestedCount}本の記事生成・画像保存・WordPress外部確認URL発行・記事カード反映がすべて完了しました`,
               );
               recovered = true;
             } else if (project?.status === "FAILED") {
@@ -1501,7 +1501,9 @@ function ArticleLibraryItem({
     featuredImage =
       images.find((image) => image.kind === "featured")?.url ||
       draft.featured_image_url,
+    wordpressPublicPreviewUrl = item.wordpress_public_preview_url || "",
     wordpressPreviewUrl =
+      wordpressPublicPreviewUrl ||
       item.wordpress_preview_url ||
       item.wordpress_edit_url?.replace(
         /\/wp-admin\/post\.php\?post=(\d+)&action=edit/,
@@ -1528,15 +1530,18 @@ function ArticleLibraryItem({
         <small>
           最終更新: {new Date(item.updated_at).toLocaleString("ja-JP")}
         </small>
-        {wordpressPreviewUrl && (
-          <a
-            className="wordpress-card-link"
-            href={wordpressPreviewUrl}
-            target="_blank"
-            rel="noreferrer"
-          >
-            WordPress下書きURLを開く
-          </a>
+        {wordpressPublicPreviewUrl && (
+          <div className="wordpress-public-preview">
+            <b>外部確認URL</b>
+            <a
+              className="wordpress-card-link"
+              href={wordpressPublicPreviewUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {wordpressPublicPreviewUrl}
+            </a>
+          </div>
         )}
       </div>
       {open && (
@@ -1949,7 +1954,9 @@ function ArticleLibraryItem({
                 target="_blank"
                 rel="noreferrer"
               >
-                WordPress下書きを閲覧
+                {wordpressPublicPreviewUrl
+                  ? "外部確認URLを開く"
+                  : "WordPress下書きを閲覧"}
               </a>
             )}
             {item.wordpress_edit_url && (

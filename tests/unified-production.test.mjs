@@ -63,6 +63,25 @@ test("article regeneration APIs and WordPress preview URL are persisted", async 
   assert.match(migration, /wordpress_preview_url/);
 });
 
+test("WordPress public preview is enabled and its external URL is shown on every card", async () => {
+  const route = await readFile(new URL("app/api/[[...path]]/route.ts", root), "utf8");
+  const production = await readFile(new URL("lib/unified-production.ts", root), "utf8");
+  const studio = await readFile(new URL("app/seo-loop-app.tsx", root), "utf8");
+  const migration = await readFile(new URL("migrations/0011_wordpress_public_preview.sql", root), "utf8");
+
+  assert.match(production, /public_post_preview/);
+  assert.match(production, /DS_Public_Post_Preview::get_preview_link/);
+  assert.match(production, /video-primary-article\/v1\/public-preview/);
+  assert.match(production, /wordpress_public_preview_url/);
+  assert.match(production, /enableWordPressPublicPreview/);
+  assert.match(route, /wordpress\/public-previews\/backfill/);
+  assert.match(route, /backfillWordPressPublicPreviews/);
+  assert.match(migration, /wordpress_public_preview_url/);
+  assert.match(studio, /外部確認URL/);
+  assert.match(studio, /wordpressPublicPreviewUrl/);
+  assert.match(studio, /\{wordpressPublicPreviewUrl\}/);
+});
+
 test("video frames and GPT Image 2 create sharp 16:9 editorial visuals", async () => {
   const production = await readFile(new URL("lib/unified-production.ts", root), "utf8");
   const styles = await readFile(new URL("app/globals.css", root), "utf8");
@@ -153,8 +172,8 @@ test("article batches become visible only after every article, image, and WordPr
   assert.match(route, /WHERE batch_ready=1 ORDER BY updated_at DESC/);
   assert.match(migration, /batch_ready INTEGER NOT NULL DEFAULT 1/);
   assert.match(studio, /visibleCreated\.length !== requestedCount/);
-  assert.match(studio, /WordPress下書きURLを開く/);
-  assert.match(studio, /WordPress下書きURL取得・記事カード反映がすべて完了/);
+  assert.match(studio, /外部確認URL/);
+  assert.match(studio, /WordPress外部確認URL発行・記事カード反映がすべて完了/);
   assert.match(studio, /通信を自動再接続しています/);
   assert.match(studio, /project_id === project\.id/);
   assert.match(studio, /Date\.parse\(item\.created_at\) >= submittedAt - 60_000/);
