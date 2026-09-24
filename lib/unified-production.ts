@@ -54,6 +54,11 @@ type VideoFrameAsset = ImageAsset & {
   timestampSeconds: number;
   sourceDescription: string;
 };
+type ReferenceImageAsset = {
+  bytes: Uint8Array;
+  contentType: "image/png" | "image/jpeg" | "image/webp";
+  extension: "png" | "jpg" | "webp";
+};
 type VideoCard = {
   url: string;
   thumbnailUrl: string;
@@ -73,6 +78,7 @@ type ProductionInput = {
   challenger_name?: unknown;
   challenger_company?: unknown;
   challenger_role?: unknown;
+  challenger_image_key?: unknown;
   special_guest?: unknown;
   mc_name?: unknown;
 };
@@ -85,7 +91,7 @@ export type YouTubeMetadata = {
   thumbnailUrl: string;
 };
 
-const IMAGE_MODEL = "gpt-image-2.5-sunburst";
+const IMAGE_MODEL = "gpt-image-2";
 const IMAGE_SIZE = "2048x1152";
 const brandEnglish = (value: unknown) =>
   String(value ?? "")
@@ -511,7 +517,7 @@ async function renderFeaturedTypographyInBrowser(
     const page = await browser.newPage();
     await page.setViewport({ width: 2048, height: 1152, deviceScaleFactor: 1 });
     await page.setContent(`<!doctype html><html lang="ja"><head><meta charset="utf-8"><style>
-      *{box-sizing:border-box}html,body{margin:0;width:2048px;height:1152px;overflow:hidden;background:#fff}body{font-family:"Noto Sans CJK JP","Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif}.hero{position:relative;width:2048px;height:1152px;background-image:url("data:${image.contentType};base64,${bytesBase64(image.bytes)}");background-size:cover;background-position:center}.panel{position:absolute;inset:0 auto 0 0;width:1035px;padding:58px 100px 0 72px;background:linear-gradient(104deg,rgba(255,253,250,.98) 0%,rgba(255,253,250,.96) 82%,rgba(255,253,250,0) 100%)}.label{display:inline-block;margin-left:-72px;padding:24px 86px 22px 72px;background:#102b47;color:#fff7df;font-family:"Noto Serif CJK JP","Hiragino Mincho ProN","Yu Mincho",serif;font-size:70px;font-weight:700;line-height:1}.interview{display:block;margin:12px 0 30px;color:#b69237;font-family:Georgia,serif;font-size:31px;letter-spacing:14px}.headline{max-width:780px;margin:0;color:#102b47;font-family:"Noto Serif CJK JP","Hiragino Mincho ProN","Yu Mincho",serif;font-size:65px;font-weight:700;line-height:1.32;letter-spacing:.01em}.rule{width:720px;height:3px;margin:28px 0;background:#c5a34e}.company,.role{color:#102b47;font-size:33px;font-weight:700;line-height:1.45}.name{margin-top:8px;color:#102b47;font-family:"Noto Serif CJK JP","Hiragino Mincho ProN","Yu Mincho",serif;font-size:74px;font-weight:700;line-height:1.15}.brand{position:absolute;left:0;bottom:0;width:950px;height:122px;padding:37px 0 0 72px;background:#102b47;color:#fff7df;font-family:Georgia,serif;font-size:43px;font-weight:700;letter-spacing:7px}.part{position:absolute;left:680px;bottom:0;width:430px;height:122px;padding:39px 0 0 110px;clip-path:polygon(18% 0,100% 0,82% 100%,0 100%);background:#d7b55b;color:#102b47;font-family:Georgia,serif;font-size:40px;font-weight:700;white-space:nowrap}
+      *{box-sizing:border-box}html,body{margin:0;width:2048px;height:1152px;overflow:hidden;background:#fff}body{font-family:"Noto Sans CJK JP","Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif}.hero{position:relative;width:2048px;height:1152px;background-image:url("data:${image.contentType};base64,${bytesBase64(image.bytes)}");background-size:cover;background-position:right center;background-repeat:no-repeat}.panel{position:absolute;inset:0 auto 0 0;width:1010px;padding:58px 100px 0 72px;background:#fffdfa;border-right:4px solid #d7b55b}.label{display:inline-block;margin-left:-72px;padding:24px 86px 22px 72px;background:#102b47;color:#fff7df;font-family:"Noto Serif CJK JP","Hiragino Mincho ProN","Yu Mincho",serif;font-size:70px;font-weight:700;line-height:1}.interview{display:block;margin:12px 0 30px;color:#b69237;font-family:Georgia,serif;font-size:31px;letter-spacing:14px}.headline{max-width:780px;margin:0;color:#102b47;font-family:"Noto Serif CJK JP","Hiragino Mincho ProN","Yu Mincho",serif;font-size:65px;font-weight:700;line-height:1.32;letter-spacing:.01em}.rule{width:720px;height:3px;margin:28px 0;background:#c5a34e}.company,.role{color:#102b47;font-size:33px;font-weight:700;line-height:1.45}.name{margin-top:8px;color:#102b47;font-family:"Noto Serif CJK JP","Hiragino Mincho ProN","Yu Mincho",serif;font-size:74px;font-weight:700;line-height:1.15}.brand{position:absolute;left:0;bottom:0;width:950px;height:122px;padding:37px 0 0 72px;background:#102b47;color:#fff7df;font-family:Georgia,serif;font-size:43px;font-weight:700;letter-spacing:7px}.part{position:absolute;left:680px;bottom:0;width:430px;height:122px;padding:39px 0 0 110px;clip-path:polygon(18% 0,100% 0,82% 100%,0 100%);background:#d7b55b;color:#102b47;font-family:Georgia,serif;font-size:40px;font-weight:700;white-space:nowrap}
     </style></head><body><main class="hero"><section class="panel"><div class="label">経営者インタビュー</div><span class="interview">interview</span><h1 class="headline">${escapeHtml(headline.slice(0, 52))}</h1><div class="rule"></div><div class="company">${escapeHtml(source.challengerCompany)}</div><div class="role">${escapeHtml(source.challengerRole)}</div><div class="name">${escapeHtml(canonicalChallengerName(source))}</div></section><div class="brand">A TRUTH STORY</div><div class="part">PART ${source.articleIndex + 1}</div></main></body></html>`, {
       waitUntil: "load",
     });
@@ -563,7 +569,8 @@ async function applyExactFeaturedTypography(
       <style>
         .serif{font-family:'Noto Serif JP','Yu Mincho','Hiragino Mincho ProN',serif}.sans{font-family:'Noto Sans JP','Yu Gothic','Hiragino Kaku Gothic ProN',sans-serif}.headline{font-family:'Noto Serif JP','Yu Mincho','Hiragino Mincho ProN',serif;font-size:70px;font-weight:700;fill:#102b47}.meta{font-family:'Noto Sans JP','Yu Gothic','Hiragino Kaku Gothic ProN',sans-serif;fill:#102b47;font-weight:700}
       </style>
-      <path d="M0 0H1035L920 1152H0Z" fill="#fffdfa" fill-opacity=".94"/>
+      <path d="M0 0H1010V1152H0Z" fill="#fffdfa"/>
+      <line x1="1010" y1="0" x2="1010" y2="1152" stroke="#d7b55b" stroke-width="4"/>
       <path d="M0 58H850L790 235H0Z" fill="#102b47"/>
       <text x="72" y="155" class="serif" font-size="76" font-weight="700" fill="#fff7df">経営者インタビュー</text>
       <text x="74" y="210" class="serif" font-size="32" letter-spacing="14" fill="#d7b55b">interview</text>
@@ -633,6 +640,7 @@ async function generateImages(
     challengerCompany: string;
     challengerRole: string;
     challengerName: string;
+    challengerImageKey: string;
   },
 ) {
   if (!apiKey)
@@ -678,16 +686,11 @@ async function generateImages(
       asset =
         item.kind === "featured"
           ? await createFeaturedImageAsset(apiKey, source, article)
-          : await youtubeVideoFrame(
-              source.videoId,
-              Math.min(
-                0.95,
-                Math.max(
-                  0.05,
-                  (source.articleIndex + index / Math.max(2, prompts.length)) /
-                    Math.max(1, source.articleCount),
-                ),
-              ),
+          : await createSectionImageAsset(
+              apiKey,
+              source,
+              item.heading,
+              index - 1,
             );
     const imageId = id(),
       key = `articles/${articleId}/${item.kind}-${index}.${asset.extension}`;
@@ -1123,6 +1126,83 @@ async function youtubeVideoFrame(
   }
 }
 
+async function challengerReferenceImage(
+  objectKey: string,
+): Promise<ReferenceImageAsset | null> {
+  if (!objectKey.startsWith("challenger-references/")) return null;
+  const object = await runtime().FILES.get(objectKey);
+  if (!object) return null;
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  const contentType = headers.get("content-type")?.toLowerCase() || "";
+  if (!/image\/(?:png|jpeg|webp)/.test(contentType)) return null;
+  return {
+    bytes: new Uint8Array(await object.arrayBuffer()),
+    contentType: contentType.includes("png")
+      ? "image/png"
+      : contentType.includes("webp")
+        ? "image/webp"
+        : "image/jpeg",
+    extension: contentType.includes("png")
+      ? "png"
+      : contentType.includes("webp")
+        ? "webp"
+        : "jpg",
+  };
+}
+
+async function editWithGptImage2(
+  apiKey: string,
+  prompt: string,
+  inputs: ReferenceImageAsset[],
+  errorLabel: string,
+): Promise<ImageAsset> {
+  const form = new FormData();
+  form.append("model", IMAGE_MODEL);
+  form.append("prompt", prompt);
+  inputs.forEach((input, index) =>
+    form.append(
+      "image[]",
+      new Blob(
+        [
+          input.bytes.buffer.slice(
+            input.bytes.byteOffset,
+            input.bytes.byteOffset + input.bytes.byteLength,
+          ) as ArrayBuffer,
+        ],
+        { type: input.contentType },
+      ),
+      `reference-${index + 1}.${input.extension}`,
+    ),
+  );
+  form.append("n", "1");
+  form.append("size", IMAGE_SIZE);
+  form.append("quality", "high");
+  form.append("output_format", "png");
+  const response = await fetch("https://api.openai.com/v1/images/edits", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+      signal: AbortSignal.timeout(180_000),
+    }),
+    payload = (await response.json().catch(() => ({}))) as Json,
+    data = Array.isArray(payload.data) ? payload.data.map(asRecord) : [],
+    encoded = text(data[0]?.b64_json, 24_000_000);
+  if (!response.ok || !encoded)
+    throw new Error(
+      text(
+        asRecord(payload.error).message ||
+          `${errorLabel} (${response.status})`,
+        240,
+      ),
+    );
+  return {
+    bytes: base64Bytes(encoded),
+    contentType: "image/png",
+    extension: "png",
+  };
+}
+
 async function createFeaturedImageAsset(
   apiKey: string,
   source: {
@@ -1133,6 +1213,7 @@ async function createFeaturedImageAsset(
     challengerCompany: string;
     challengerRole: string;
     challengerName: string;
+    challengerImageKey: string;
   },
   article: Pick<GeneratedArticle, "title" | "catchCopy">,
 ): Promise<ImageAsset> {
@@ -1143,51 +1224,62 @@ async function createFeaturedImageAsset(
       youtubeStartSeconds(source.videoUrl) + source.articleIndex * 20,
     ),
     headline = article.catchCopy || article.title,
-    form = new FormData();
-  form.append("model", IMAGE_MODEL);
-  form.append(
-    "prompt",
-    `アップロード画像はYouTube動画内から取得した実際の対談フレームです。この実写フレームを写真素材として使い、経営者インタビュー記事の洗練された16:9横長背景を作ってください。出演者本人の顔立ち、年齢、髪型、表情、服装、肌の色、本人性を変えず、架空の人物を追加しないでください。写真は自然で高品質に補正し、話している経営者または出演者が右側に明瞭に見えるトリミングにします。左側は暖かい白・ベージュの十分な余白、右側は実写人物、紺とゴールドを控えめなアクセントにした信頼感のある編集背景にします。文字、ロゴ、記号、透かしは一切描かないでください。確定した日本語文字は後工程で正確に合成します。`,
+    challenger = await challengerReferenceImage(source.challengerImageKey),
+    frameInput: ReferenceImageAsset = frame,
+    inputs = challenger ? [frameInput, challenger] : [frameInput],
+    referenceInstruction = challenger
+      ? "画像2は挑戦者本人の参照写真です。画像2の顔立ち・輪郭・目鼻・髪型を本人確認の正本として使い、画像1の対談風景にいる同一人物を挑戦者として明瞭に再現してください。"
+      : "画像1の対談風景に写っている人物の本人性を維持してください。";
+  const edited = await editWithGptImage2(
+    apiKey,
+    `画像1はYouTube動画内から取得した実際の対談フレームです。${referenceInstruction} 経営者インタビュー記事用の高精細な16:9横長写真に仕上げてください。挑戦者は右半分に大きく、顔と目に正確にピントが合い、毛髪・肌・衣服の細部まで鮮明に見える自然な写真にします。元の対談会場、照明、服装、出演者の関係を維持し、実在しない人物を追加しません。ぼかし、ソフトフォーカス、被写界深度ぼけ、モーションブラー、にじみ、二重像、半透明人物、顔の重複、身体の重複、過度な美肌補正、イラスト化を禁止します。左半分は後工程の文字組み用に人物のいない明るい背景として確保します。文字、ロゴ、字幕、記号、透かしは一切描きません。`,
+    inputs,
+    "GPT Image 2ファーストビュー画像編集APIエラー",
   );
-  form.append(
-    "image[]",
-    new Blob(
-      [
-        frame.bytes.buffer.slice(
-          frame.bytes.byteOffset,
-          frame.bytes.byteOffset + frame.bytes.byteLength,
-        ) as ArrayBuffer,
-      ],
-      { type: frame.contentType },
-    ),
-    `video-frame.${frame.extension}`,
-  );
-  form.append("n", "1");
-  form.append("size", IMAGE_SIZE);
-  form.append("quality", "max");
-  form.append("output_format", "png");
-  const response = await fetch("https://api.openai.com/v1/images/edits", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body: form,
-      signal: AbortSignal.timeout(110_000),
-    }),
-    payload = (await response.json().catch(() => ({}))) as Json,
-    data = Array.isArray(payload.data) ? payload.data.map(asRecord) : [],
-    encoded = text(data[0]?.b64_json, 20_000_000);
-  if (!response.ok || !encoded)
-    throw new Error(
-      text(
-        asRecord(payload.error).message ||
-          `ファーストビュー画像編集APIエラー (${response.status})`,
-        240,
+  return applyExactFeaturedTypography(edited, source, headline);
+}
+
+async function createSectionImageAsset(
+  apiKey: string,
+  source: {
+    videoId: string;
+    videoUrl: string;
+    articleIndex: number;
+    articleCount: number;
+    challengerCompany: string;
+    challengerRole: string;
+    challengerName: string;
+    challengerImageKey: string;
+  },
+  heading: string,
+  sectionIndex: number,
+): Promise<ImageAsset> {
+  const frame = await youtubeVideoFrame(
+      source.videoId,
+      Math.min(
+        0.95,
+        Math.max(
+          0.05,
+          (source.articleIndex + (sectionIndex + 1) / 7) /
+            Math.max(1, source.articleCount),
+        ),
       ),
-    );
-  return applyExactFeaturedTypography({
-    bytes: base64Bytes(encoded),
-    contentType: "image/png",
-    extension: "png",
-  }, source, headline);
+      youtubeStartSeconds(source.videoUrl) +
+        source.articleIndex * 60 +
+        (sectionIndex + 1) * 75,
+    ),
+    challenger = await challengerReferenceImage(source.challengerImageKey),
+    frameInput: ReferenceImageAsset = frame,
+    inputs = challenger ? [frameInput, challenger] : [frameInput],
+    referenceInstruction = challenger
+      ? `画像2は挑戦者「${canonicalChallengerName(source)}」本人の参照写真です。画像2を本人確認の正本として、画像1の対談場面の同一人物を正確に保ってください。`
+      : "画像1に写る出演者本人の顔立ちを維持してください。";
+  return editWithGptImage2(
+    apiKey,
+    `画像1はYouTube動画内の実際の対談場面です。${referenceInstruction} 記事セクション「${heading}」に合う瞬間として、元の対談風景を自然で高精細な16:9写真に再構成してください。話者と聞き手の自然な視線・姿勢・距離感を保ち、顔、目、髪、衣服、椅子、背景の輪郭をくっきり描写します。ぼかし、ソフトフォーカス、被写界深度ぼけ、モーションブラー、にじみ、二重像、半透明人物、顔や身体の重複、架空人物、イラスト化、字幕、文字、ロゴ、透かしを禁止します。全員に十分なピントが合った、実写の取材写真として仕上げてください。`,
+    inputs,
+    "GPT Image 2セクション画像編集APIエラー",
+  );
 }
 
 function replaceSectionImage(
@@ -1223,7 +1315,7 @@ export async function regenerateArticleImage(
 ) {
   const article = await runtime()
     .DB.prepare(
-      "SELECT a.*,p.youtube_url,p.challenger_company,p.challenger_role,p.challenger_name FROM articles a JOIN production_projects p ON p.id=a.project_id WHERE a.id=?",
+      "SELECT a.*,p.youtube_url,p.challenger_company,p.challenger_role,p.challenger_name,p.challenger_image_key FROM articles a JOIN production_projects p ON p.id=a.project_id WHERE a.id=?",
     )
     .bind(articleId)
     .first<Record<string, unknown>>();
@@ -1267,6 +1359,7 @@ export async function regenerateArticleImage(
         challengerCompany: text(article.challenger_company, 240),
         challengerRole: text(article.challenger_role, 160),
         challengerName: text(article.challenger_name, 160),
+        challengerImageKey: text(article.challenger_image_key, 500),
       },
       {
         title: text(article.title, 300),
@@ -1275,15 +1368,23 @@ export async function regenerateArticleImage(
     );
   } else {
     const sectionIndex = Math.max(0, Number(options.sectionIndex) || 0);
-    asset = await youtubeVideoFrame(
-      videoId,
-      Math.min(
-        0.95,
-        Math.max(
-          0.05,
-          (articleIndex + (sectionIndex + 1) / 7) / articleCount,
-        ),
-      ),
+    const apiKey = await getOpenAiApiKey();
+    if (!apiKey)
+      throw new Error("OpenAI GPT Imageを連携設定で接続してください。");
+    asset = await createSectionImageAsset(
+      apiKey,
+      {
+        videoId,
+        videoUrl: text(article.youtube_url, 1000),
+        articleIndex,
+        articleCount,
+        challengerCompany: text(article.challenger_company, 240),
+        challengerRole: text(article.challenger_role, 160),
+        challengerName: text(article.challenger_name, 160),
+        challengerImageKey: text(article.challenger_image_key, 500),
+      },
+      heading,
+      sectionIndex,
     );
   }
   const key = `articles/${articleId}/${kind}-${Date.now()}.${asset.extension}`;
@@ -1438,6 +1539,7 @@ export async function createUnifiedProduction(
     challengerCompany = text(brandEnglish(input.challenger_company), 300),
     challengerRole = text(brandEnglish(input.challenger_role), 300),
     challengerName = text(brandEnglish(input.challenger_name), 300),
+    challengerImageKey = text(input.challenger_image_key, 500),
     specialGuest = text(brandEnglish(input.special_guest), 500),
     mcName = text(brandEnglish(input.mc_name), 500);
   if (transcript.length < 80)
@@ -1446,6 +1548,14 @@ export async function createUnifiedProduction(
   if (!challengerCompany || !challengerRole || !challengerName)
     throw new Error(
       "挑戦者の会社名・役職・出演者名をすべて入力してください。",
+    );
+  if (!challengerImageKey.startsWith("challenger-references/"))
+    throw new Error(
+      "挑戦者本人の参照画像をアップロードしてください。アイキャッチと各H2画像の本人識別に使用します。",
+    );
+  if (!(await challengerReferenceImage(challengerImageKey)))
+    throw new Error(
+      "挑戦者の参照画像を確認できませんでした。画像を選び直してください。",
     );
   const articleCount = clamp(input.article_limit, 1),
     imageCount = clamp(input.image_count, 1),
@@ -1520,7 +1630,7 @@ export async function createUnifiedProduction(
     await runtime().DB.batch([
       runtime()
         .DB.prepare(
-          "UPDATE production_projects SET youtube_title=?,youtube_description=?,youtube_chapters=?,transcript=?,transcript_chars=?,direction=?,challenger_name=?,challenger_company=?,challenger_role=?,special_guest=?,mc_name=?,image_count=?,wordpress_category_id=?,wordpress_category_name=?,updated_at=? WHERE id=?",
+          "UPDATE production_projects SET youtube_title=?,youtube_description=?,youtube_chapters=?,transcript=?,transcript_chars=?,direction=?,challenger_name=?,challenger_company=?,challenger_role=?,challenger_image_key=?,special_guest=?,mc_name=?,image_count=?,wordpress_category_id=?,wordpress_category_name=?,updated_at=? WHERE id=?",
         )
         .bind(
           title,
@@ -1532,6 +1642,7 @@ export async function createUnifiedProduction(
           challengerName,
           challengerCompany,
           challengerRole,
+          challengerImageKey,
           specialGuest,
           mcName,
           imageCount,
@@ -1547,7 +1658,7 @@ export async function createUnifiedProduction(
   else
     await runtime()
       .DB.prepare(
-        "INSERT INTO production_projects (id,youtube_url,youtube_title,youtube_description,youtube_chapters,transcript,transcript_chars,direction,challenger_name,challenger_company,challenger_role,special_guest,mc_name,strict_evidence,image_suggestions,article_limit,image_count,wordpress_category_id,wordpress_category_name,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO production_projects (id,youtube_url,youtube_title,youtube_description,youtube_chapters,transcript,transcript_chars,direction,challenger_name,challenger_company,challenger_role,challenger_image_key,special_guest,mc_name,strict_evidence,image_suggestions,article_limit,image_count,wordpress_category_id,wordpress_category_name,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       )
       .bind(
         projectId,
@@ -1561,6 +1672,7 @@ export async function createUnifiedProduction(
         challengerName,
         challengerCompany,
         challengerRole,
+        challengerImageKey,
         specialGuest,
         mcName,
         1,
@@ -1723,6 +1835,7 @@ export async function createUnifiedProduction(
               challengerCompany,
               challengerRole,
               challengerName,
+              challengerImageKey,
             }),
           2,
         );

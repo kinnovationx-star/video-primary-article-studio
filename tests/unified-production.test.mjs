@@ -60,14 +60,16 @@ test("article regeneration APIs and WordPress preview URL are persisted", async 
   assert.match(migration, /wordpress_preview_url/);
 });
 
-test("video frames and GPT Image 2.5 create 16:9 editorial visuals", async () => {
+test("video frames and GPT Image 2 create sharp 16:9 editorial visuals", async () => {
   const production = await readFile(new URL("lib/unified-production.ts", root), "utf8");
   const styles = await readFile(new URL("app/globals.css", root), "utf8");
-  assert.match(production, /gpt-image-2\.5-sunburst/);
+  assert.match(production, /const IMAGE_MODEL = "gpt-image-2"/);
   assert.match(production, /2048x1152/);
   assert.match(production, /storyboard3|playerStoryboardSpecRenderer/);
   assert.match(production, /trim: \{ top, right, bottom, left \}/);
   assert.match(production, /動画内から取得した実際の対談フレーム/);
+  assert.match(production, /ぼかし、ソフトフォーカス/);
+  assert.match(production, /createSectionImageAsset/);
   assert.doesNotMatch(production, /size: "1536x1024"/);
   assert.match(styles, /aspect-ratio: 16 \/ 9/);
   assert.match(styles, /max-width: 620px/);
@@ -83,6 +85,7 @@ test("YouTube frames, canonical cast fields, PART 1-5, and end-video links are w
     "challenger_company",
     "challenger_role",
     "challenger_name",
+    "challenger_image_key",
     "special_guest",
     "mc_name",
     "youtube_description",
@@ -94,7 +97,7 @@ test("YouTube frames, canonical cast fields, PART 1-5, and end-video links are w
   assert.match(production, /i\.ytimg\.com\/vi/);
   assert.match(production, /v1\/images\/edits/);
   assert.match(production, /image\[\]/);
-  assert.match(production, /quality", "max"/);
+  assert.match(production, /quality", "high"/);
   assert.match(production, /固有名詞の正本/);
   assert.match(production, /文字起こし由来の別表記/);
   assert.match(production, /runtime\(\)\.IMAGES/);
@@ -107,6 +110,21 @@ test("YouTube frames, canonical cast fields, PART 1-5, and end-video links are w
   assert.match(migration, /youtube_description/);
   assert.match(migration, /youtube_chapters/);
   assert.match(migration, /challenger_role/);
+});
+
+test("challenger reference image is required and stored independently", async () => {
+  const studio = await readFile(new URL("app/seo-loop-app.tsx", root), "utf8");
+  const production = await readFile(new URL("lib/unified-production.ts", root), "utf8");
+  const route = await readFile(new URL("app/api/[[...path]]/route.ts", root), "utf8");
+  const migration = await readFile(new URL("migrations/0010_challenger_reference_image.sql", root), "utf8");
+
+  assert.match(studio, /挑戦者本人の参照画像/);
+  assert.match(studio, /accept="image\/jpeg,image\/png,image\/webp"/);
+  assert.match(route, /route === "challenger-reference"/);
+  assert.match(route, /challenger-references\//);
+  assert.match(production, /challengerReferenceImage/);
+  assert.match(production, /画像2は挑戦者本人の参照写真/);
+  assert.match(migration, /challenger_image_key/);
 });
 
 test("article batches become visible only after every article, image, and WordPress URL is complete", async () => {

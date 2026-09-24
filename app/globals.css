@@ -273,6 +273,38 @@ textarea {
   font-size: 13px;
   margin: 0;
 }
+.challenger-reference-field {
+  border: 1px solid #d5e0e9;
+  border-radius: 12px;
+  padding: 18px;
+  background: #f8fafc;
+}
+.challenger-reference-field input[type="file"] {
+  padding: 12px;
+  border-style: dashed;
+  background: #fff;
+}
+.reference-status {
+  color: #1764d8;
+  font-size: 13px;
+  font-weight: 800;
+}
+.challenger-reference-preview {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: #157249;
+  font-size: 13px;
+}
+.challenger-reference-preview img {
+  width: 120px;
+  height: 80px;
+  border-radius: 9px;
+  border: 1px solid #cfdbe5;
+  object-fit: cover;
+  object-position: center top;
+  background: #fff;
+}
 .button-row {
   display: flex;
   gap: 9px;

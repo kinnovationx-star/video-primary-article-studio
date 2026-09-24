@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ChangeEvent,
   FormEvent,
   MouseEvent as ReactMouseEvent,
   useEffect,
@@ -772,7 +773,10 @@ function Studio({
     [loadingVideo, setLoadingVideo] = useState(false),
     [videoTitle, setVideoTitle] = useState(""),
     [videoDescription, setVideoDescription] = useState(""),
-    [videoChapters, setVideoChapters] = useState("");
+    [videoChapters, setVideoChapters] = useState(""),
+    [challengerImageKey, setChallengerImageKey] = useState(""),
+    [challengerImagePreview, setChallengerImagePreview] = useState(""),
+    [uploadingChallengerImage, setUploadingChallengerImage] = useState(false);
   const loadVideoMetadata = async (url: string) => {
     if (!url.trim()) return;
     setLoadingVideo(true);
@@ -796,6 +800,49 @@ function Studio({
       setNotice(errorText(error));
     } finally {
       setLoadingVideo(false);
+    }
+  };
+  const uploadChallengerReference = async (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.currentTarget.files?.[0];
+    setChallengerImageKey("");
+    setChallengerImagePreview("");
+    if (!file) return;
+    if (!/^image\/(?:jpeg|png|webp)$/i.test(file.type)) {
+      setNotice("挑戦者画像はJPEG・PNG・WebPを使用してください。");
+      event.currentTarget.value = "";
+      return;
+    }
+    if (file.size > 12 * 1024 * 1024) {
+      setNotice("挑戦者画像は12MB以下にしてください。");
+      event.currentTarget.value = "";
+      return;
+    }
+    const form = new FormData();
+    form.append("file", file);
+    setUploadingChallengerImage(true);
+    progress.start("挑戦者本人の参照画像を登録");
+    try {
+      const result = await api<{
+        reference: { objectKey: string };
+        notice: string;
+      }>("challenger-reference", "POST", form);
+      setChallengerImageKey(result.reference.objectKey);
+      const reader = new FileReader();
+      reader.onload = () => setChallengerImagePreview(String(reader.result || ""));
+      reader.readAsDataURL(file);
+      setNotice(result.notice);
+      progress.complete(
+        "挑戦者本人の参照画像を保存し、本人識別の準備が完了しました",
+      );
+    } catch (error) {
+      const message = errorText(error);
+      progress.fail(message);
+      setNotice(message);
+      event.currentTarget.value = "";
+    } finally {
+      setUploadingChallengerImage(false);
     }
   };
   useEffect(() => {
@@ -909,6 +956,34 @@ function Studio({
             記事では会社名・役職・出演者名を一組で表記します。
           </small>
         </label>
+        <label className="wide challenger-reference-field">
+          挑戦者本人の参照画像
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            required
+            onChange={(event) => void uploadChallengerReference(event)}
+          />
+          <input
+            type="hidden"
+            name="challenger_image_key"
+            value={challengerImageKey}
+          />
+          <small className="field-help">
+            顔が鮮明に写った正面または斜め正面の写真を登録してください。GPT Image
+            2がこの画像を本人識別の正本として、アイキャッチと各H2の対談画像を高画質に再生成します。
+          </small>
+          {uploadingChallengerImage && (
+            <span className="reference-status">参照画像を保存しています…</span>
+          )}
+          {challengerImagePreview && challengerImageKey && (
+            <span className="challenger-reference-preview">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={challengerImagePreview} alt="登録した挑戦者本人の参照画像" />
+              <b>挑戦者本人として登録済み</b>
+            </span>
+          )}
+        </label>
         <label>
           スペシャルゲスト（任意）
           <input name="special_guest" placeholder="例：会社名・役職・氏名" />
@@ -980,13 +1055,18 @@ function Studio({
         <div className="button-row wide">
           <button
             className="primary production-button"
-            disabled={busy || (wordpressConnected && !categories.length)}
+            disabled={
+              busy ||
+              uploadingChallengerImage ||
+              !challengerImageKey ||
+              (wordpressConnected && !categories.length)
+            }
           >
             {busy ? "記事を制作中…" : "記事を作成する"}
           </button>
         </div>
         <p className="field-help wide">
-          Claudeが動画概要・目次・文字起こしを照合・校正し、登録した会社名・役職・出演者名を正本として文章とSEO情報を作ります。ファーストビューは動画内の実写フレームをGPT Image 2.5 Sunburstで編集し、各H2には動画内の対談場面を最大1枚配置します。処理中は上部に進捗率を表示します。
+          Claudeが動画概要・目次・文字起こしを照合・校正し、登録した会社名・役職・出演者名を正本として文章とSEO情報を作ります。ファーストビューと各H2画像は、動画内の実写フレームと挑戦者本人の参照画像をGPT Image 2へ入力し、ぼかしのない高精細な16:9対談写真として生成します。各H2には最大1枚を配置し、処理中は上部に進捗率を表示します。
         </p>
       </form>
       <section className="studio-generated">

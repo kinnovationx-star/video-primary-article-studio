@@ -68,7 +68,7 @@ const providers = [
   ["drive", "Google Drive", "資料・写真・議事録"],
   ["youtube", "YouTube", "動画・文字起こし"],
   ["anthropic", "Claude API", "記事生成・採点・分析"],
-  ["openai", "OpenAI GPT Image 2.5", "16:9・記事図解・H2図解"],
+  ["openai", "OpenAI GPT Image 2", "16:9・高精細アイキャッチ・H2対談画像"],
   ["wordpress", "WordPress", "下書き投稿・カテゴリ同期"],
   ["pagespeed", "PageSpeed Insights", "技術SEO"],
   ["notion", "Notion", "企画・下書き共有"],
@@ -318,6 +318,45 @@ export async function POST(request: Request, context: Context) {
   try {
     const path = (await context.params).path || [],
       route = path.join("/");
+    if (route === "challenger-reference") {
+      const form = await request.formData(),
+        file = form.get("file");
+      if (!(file instanceof File))
+        return json({ error: "挑戦者本人の画像を選択してください。" }, 400);
+      if (!/^image\/(?:jpeg|png|webp)$/i.test(file.type))
+        return json(
+          { error: "挑戦者画像はJPEG・PNG・WebPを使用してください。" },
+          400,
+        );
+      if (file.size > 12 * 1024 * 1024)
+        return json({ error: "挑戦者画像は12MB以下にしてください。" }, 400);
+      const referenceId = id(),
+        extension = file.type.toLowerCase().includes("png")
+          ? "png"
+          : file.type.toLowerCase().includes("webp")
+            ? "webp"
+            : "jpg",
+        key = `challenger-references/${referenceId}/portrait.${extension}`;
+      await runtime().FILES.put(key, file.stream(), {
+        httpMetadata: {
+          contentType: file.type,
+          cacheControl: "private, max-age=0, no-store",
+        },
+      });
+      return json(
+        {
+          reference: {
+            id: referenceId,
+            objectKey: key,
+            name: file.name,
+            size: file.size,
+          },
+          notice:
+            "挑戦者本人の参照画像を保存しました。GPT Image 2が本人識別の正本として使用します。",
+        },
+        201,
+      );
+    }
     if (route === "uploads") {
       const form = await request.formData(),
         file = form.get("file");
