@@ -446,6 +446,84 @@ function base64Bytes(value: string) {
   return bytes;
 }
 
+const escapeXml = (value: unknown) =>
+  String(value ?? "").replace(
+    /[&<>"']/g,
+    (character) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[
+        character
+      ] || character,
+  );
+
+function headlineLines(value: string) {
+  const cleaned = value.replace(/\s+/g, "").slice(0, 52),
+    lines: string[] = [];
+  for (let start = 0; start < cleaned.length && lines.length < 4; start += 13)
+    lines.push(cleaned.slice(start, start + 13));
+  return lines.length ? lines : ["動画で語られた挑戦の物語"];
+}
+
+async function applyExactFeaturedTypography(
+  image: ImageAsset,
+  source: {
+    challengerCompany: string;
+    challengerRole: string;
+    challengerName: string;
+    articleIndex: number;
+  },
+  headline: string,
+): Promise<ImageAsset> {
+  const images = runtime().IMAGES;
+  if (!images) return image;
+  const lines = headlineLines(headline),
+    title = lines
+      .map(
+        (line, index) =>
+          `<text x="72" y="${350 + index * 92}" class="headline">${escapeXml(line)}</text>`,
+      )
+      .join(""),
+    svg = `<svg xmlns="http://www.w3.org/2000/svg" width="2048" height="1152" viewBox="0 0 2048 1152">
+      <style>
+        .serif{font-family:'Noto Serif JP','Yu Mincho','Hiragino Mincho ProN',serif}.sans{font-family:'Noto Sans JP','Yu Gothic','Hiragino Kaku Gothic ProN',sans-serif}.headline{font-family:'Noto Serif JP','Yu Mincho','Hiragino Mincho ProN',serif;font-size:70px;font-weight:700;fill:#102b47}.meta{font-family:'Noto Sans JP','Yu Gothic','Hiragino Kaku Gothic ProN',sans-serif;fill:#102b47;font-weight:700}
+      </style>
+      <path d="M0 0H1035L920 1152H0Z" fill="#fffdfa" fill-opacity=".94"/>
+      <path d="M0 58H850L790 235H0Z" fill="#102b47"/>
+      <text x="72" y="155" class="serif" font-size="76" font-weight="700" fill="#fff7df">経営者インタビュー</text>
+      <text x="74" y="210" class="serif" font-size="32" letter-spacing="14" fill="#d7b55b">interview</text>
+      ${title}
+      <line x1="72" y1="${390 + lines.length * 92}" x2="790" y2="${390 + lines.length * 92}" stroke="#c5a34e" stroke-width="3"/>
+      <text x="72" y="${470 + lines.length * 92}" class="meta" font-size="34">${escapeXml(source.challengerCompany)}</text>
+      <text x="72" y="${525 + lines.length * 92}" class="meta" font-size="34">${escapeXml(source.challengerRole)}</text>
+      <text x="72" y="${620 + lines.length * 92}" class="serif" font-size="76" font-weight="700" fill="#102b47">${escapeXml(canonicalChallengerName(source))}</text>
+      <path d="M0 1030H945L865 1152H0Z" fill="#102b47"/>
+      <text x="72" y="1110" class="serif" font-size="44" font-weight="700" letter-spacing="7" fill="#fff7df">A TRUTH STORY</text>
+      <path d="M760 1030H1110L1030 1152H680Z" fill="#d7b55b"/>
+      <text x="790" y="1110" class="serif" font-size="42" font-weight="700" fill="#102b47">PART ${source.articleIndex + 1}</text>
+    </svg>`,
+    imageBuffer = image.bytes.buffer.slice(
+      image.bytes.byteOffset,
+      image.bytes.byteOffset + image.bytes.byteLength,
+    ) as ArrayBuffer;
+  try {
+    const transformed = await images
+        .input(new Blob([imageBuffer], { type: image.contentType }).stream())
+        .draw(
+          new Blob([svg], { type: "image/svg+xml;charset=utf-8" }).stream(),
+        )
+        .output({ format: "image/png" }),
+      response = transformed.response();
+    if (!response.ok)
+      throw new Error(`画像文字組みエラー (${response.status})`);
+    return {
+      bytes: new Uint8Array(await response.arrayBuffer()),
+      contentType: "image/png",
+      extension: "png",
+    };
+  } catch {
+    return image;
+  }
+}
+
 async function generateImages(
   apiKey: string,
   articleId: string,
@@ -960,17 +1038,12 @@ async function createFeaturedImageAsset(
       source.videoId,
       (source.articleIndex + 0.5) / Math.max(1, source.articleCount),
     ),
-    part = `PART ${source.articleIndex + 1}`,
-    identity = exactIdentity(source),
     headline = article.catchCopy || article.title,
-    rareKanjiHint = source.challengerName.includes("﨑")
-      ? "氏名の『﨑』はUnicode U+FA11のたつさきです。一般的な『崎』へ絶対に置き換えないでください。"
-      : "",
     form = new FormData();
   form.append("model", IMAGE_MODEL);
   form.append(
     "prompt",
-    `アップロード画像はYouTube動画内から取得した実際の対談フレームです。この実写フレームを写真素材として使い、経営者インタビュー記事の洗練されたファーストビュー画像を作ってください。厳密な16:9横長です。出演者本人の顔立ち、年齢、髪型、表情、服装、肌の色、本人性を変えず、架空の人物を追加しないでください。写真は自然で高品質に補正し、話している経営者または出演者が明瞭に見えるトリミングにします。暖かい白・ベージュを基調に、紺またはゴールドをアクセントにした信頼感のある日本語編集デザインにします。参考構成は、右側に実写人物、左側に読みやすい見出しパネルです。\n\n画像内に入れる文字は次の確定文字だけです。誤字、脱字、別漢字、勝手な省略を禁止します。\n「経営者インタビュー」\n「interview」\n「${headline}」\n「${source.challengerCompany}」\n「${source.challengerRole}」\n「${source.challengerName}」\n「A TRUTH STORY」\n「${part}」\n\n${rareKanjiHint}\n「A TRUE STORY」やカタカナの番組名、文字起こし由来の別名、偽ロゴ、透かし、余計なコピーは入れません。確定人物表記は「${identity}」です。すべての文字を画像端から十分離し、日本語の可読性とスペルを最終確認してください。`,
+    `アップロード画像はYouTube動画内から取得した実際の対談フレームです。この実写フレームを写真素材として使い、経営者インタビュー記事の洗練された16:9横長背景を作ってください。出演者本人の顔立ち、年齢、髪型、表情、服装、肌の色、本人性を変えず、架空の人物を追加しないでください。写真は自然で高品質に補正し、話している経営者または出演者が右側に明瞭に見えるトリミングにします。左側は暖かい白・ベージュの十分な余白、右側は実写人物、紺とゴールドを控えめなアクセントにした信頼感のある編集背景にします。文字、ロゴ、記号、透かしは一切描かないでください。確定した日本語文字は後工程で正確に合成します。`,
   );
   form.append(
     "image[]",
@@ -1006,11 +1079,11 @@ async function createFeaturedImageAsset(
         240,
       ),
     );
-  return {
+  return applyExactFeaturedTypography({
     bytes: base64Bytes(encoded),
     contentType: "image/png",
     extension: "png",
-  };
+  }, source, headline);
 }
 
 function replaceSectionImage(

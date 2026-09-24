@@ -96,7 +96,9 @@ test("YouTube frames, canonical cast fields, PART 1-5, and end-video links are w
   assert.match(production, /image\[\]/);
   assert.match(production, /quality", "max"/);
   assert.match(production, /固有名詞の正本/);
-  assert.match(production, /文字起こし由来の別名/);
+  assert.match(production, /文字起こし由来の別表記/);
+  assert.match(production, /runtime\(\)\.IMAGES/);
+  assert.match(production, /image\/svg\+xml/);
   assert.match(production, /youtube-video-link/);
   assert.match(production, /この動画をYouTubeで見る/);
   assert.match(production, /A TRUTH STORY/);
