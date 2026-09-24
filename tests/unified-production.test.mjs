@@ -11,6 +11,9 @@ test("studio exposes one unified production submit button", async () => {
   assert.doesNotMatch(studio, /制作入力を保存|キーワード候補を出す|この候補で記事を制作/);
   assert.match(studio, /article_limit/);
   assert.match(studio, /image_count/);
+  assert.match(studio, /name="image_count"[\s\S]*value="5"[\s\S]*readOnly/);
+  assert.match(studio, /5枚固定です/);
+  assert.match(studio, /同じ画像や似た構図は使用しません/);
   assert.match(studio, /wordpress_category_id/);
 });
 
@@ -70,6 +73,11 @@ test("video frames and GPT Image 2 create sharp 16:9 editorial visuals", async (
   assert.match(production, /動画内から取得した実際の対談フレーム/);
   assert.match(production, /ぼかし、ソフトフォーカス/);
   assert.match(production, /createSectionImageAsset/);
+  assert.match(production, /const IMAGES_PER_ARTICLE = 5/);
+  assert.match(production, /SECTION_SHOT_PLANS/);
+  assert.match(production, /同一フレーム、同じポーズ/);
+  assert.match(production, /imageCount = IMAGES_PER_ARTICLE/);
+  assert.match(production, /article\.sections\.slice\(0, IMAGES_PER_ARTICLE - 1\)/);
   assert.doesNotMatch(production, /size: "1536x1024"/);
   assert.match(styles, /aspect-ratio: 16 \/ 9/);
   assert.match(styles, /max-width: 620px/);

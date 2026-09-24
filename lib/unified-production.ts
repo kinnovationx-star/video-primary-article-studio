@@ -93,6 +93,20 @@ export type YouTubeMetadata = {
 
 const IMAGE_MODEL = "gpt-image-2";
 const IMAGE_SIZE = "2048x1152";
+const IMAGES_PER_ARTICLE = 5;
+const SECTION_SHOT_PLANS = [
+  "挑戦者を胸上で捉える一人中心のミディアムクローズアップ。正面ではなく自然な斜め45度から、話している表情を主役にする",
+  "出演者3名と対談会場の関係が分かる引きのワイドショット。全員の全身または膝上と椅子を画面内に収める",
+  "聞き手の肩越しに挑戦者を捉えるオーバーショルダーショット。手前の人物は小さく、挑戦者の視線と表情を鮮明に見せる",
+  "挑戦者と聞き手の会話が伝わる横方向のツーショット。身振りや手の動きも含むミディアムショットにする",
+] as const;
+const FEATURED_SHOT_PLANS = [
+  "挑戦者の上半身を右側に大きく配置し、左側に文字組み用の余白を確保する",
+  "挑戦者を椅子に座った膝上の構図で右側に配置し、左側に文字組み用の余白を確保する",
+  "挑戦者が話している瞬間を右斜め前から捉え、右側に配置し、左側に文字組み用の余白を確保する",
+  "挑戦者の自然な身振りが見える中景を右側に配置し、左側に文字組み用の余白を確保する",
+  "挑戦者の落ち着いた表情と対談会場が両方分かる広めの構図で右側に配置し、左側に文字組み用の余白を確保する",
+] as const;
 const brandEnglish = (value: unknown) =>
   String(value ?? "")
     .replace(/A\s+TRUE\s+STORY/gi, "A TRUTH STORY")
@@ -191,8 +205,10 @@ function normalizeArticle(
     })
     .filter((item) => item.heading && item.html)
     .slice(0, 8);
-  if (sections.length < 2)
-    throw new Error("AIが十分なH2セクションを生成できませんでした。");
+  if (sections.length < 4)
+    throw new Error(
+      "画像5枚を配置するために必要な4つのH2セクションを生成できませんでした。",
+    );
   const title =
     text(brandEnglish(value.title), 160) ||
     `${brandEnglish(keyword)}を動画の一次情報から解説`;
@@ -405,7 +421,7 @@ async function generateArticle(
   source.challengerName = canonicalChallengerName(source);
   const focus = source.keywords[index % source.keywords.length] || source.title;
   const identity = exactIdentity(source);
-  const prompt = `あなたは校正能力の高い日本語SEO編集者です。次の動画一次情報だけを根拠に、重複しない記事${index + 1}本目（PART ${index + 1}）を作成してください。動画にない数値・人物属性・効果・断定を補ってはいけません。主軸キーワードは「${focus}」。関連候補は ${source.keywords.slice(0, 10).join("、")}（取得元: ${source.provider}）。方向性: ${source.direction || "動画内容を忠実に整理"}\n\n【最優先・固有名詞の正本】\n以下はユーザーが入力欄で登録した確定情報です。文字起こしより常に優先し、表記揺れを推測・補正・別漢字化してはいけません。記事内、SEO情報、画像指示のすべてで一字一句同じ表記を使ってください。\n会社名: ${source.challengerCompany}\n役職: ${source.challengerRole}\n出演者名: ${source.challengerName}\n正式な一組表記: ${identity}\nスペシャルゲスト（入力がある場合だけ使用）: ${source.specialGuest || "なし"}\nMC（入力がある場合だけ使用）: ${source.mcName || "なし"}\n番組名は必ず英語の「A TRUTH STORY」とし、カタカナ表記や「A TRUE STORY」は使いません。\n\n動画タイトル: ${source.title}\n動画URL: ${source.url}\n動画概要（動画投稿者の記載）:\n${source.description.slice(0, 30000) || "取得なし"}\n動画目次・チャプター:\n${source.chapters.slice(0, 12000) || "取得なし"}\n文字起こし（固有名詞は誤変換を含む可能性があるため正本に必ず合わせる）:\n${source.transcript.slice(0, 90000)}\n\n動画概要・目次・文字起こしを相互に照合し、概要と各チャプターの流れを記事構成へ反映してください。出演者を本文で紹介するときは必ず正式な一組表記「${identity}」を使い、文字起こし由来の別表記は使用しません。任意出演者は入力値がある場合だけ記載します。\n\nJSONオブジェクトだけを返してください。キーは title,titleTag,metaDescription,slug,mainKeyword,relatedKeywords,searchIntent,reader,angle,catchCopy,introductionHtml,sections,conclusionHtml。sectionsは3〜6件で、各要素は heading,html,imagePrompt,altText。headingはH2本文のみ（HTMLタグなし）、htmlはp/ul/ol/blockquote/strong/aだけを使う本文。本文には自然な要約・具体例・引用可能な発言・結論を含め、一次情報で確認できないことは書きません。metaDescriptionは90〜140字、titleTagは62字以内。imagePromptには、そのH2に対応する動画内の実際の対談場面として望ましい人物・構図・話題を簡潔に記述します。出力前に、誤字脱字、助詞、英語スペル、会社名、役職、出演者名、A TRUTH STORY表記を必ず再点検し、確定情報と異なる固有名詞をすべて修正してください。`;
+  const prompt = `あなたは校正能力の高い日本語SEO編集者です。次の動画一次情報だけを根拠に、重複しない記事${index + 1}本目（PART ${index + 1}）を作成してください。動画にない数値・人物属性・効果・断定を補ってはいけません。主軸キーワードは「${focus}」。関連候補は ${source.keywords.slice(0, 10).join("、")}（取得元: ${source.provider}）。方向性: ${source.direction || "動画内容を忠実に整理"}\n\n【最優先・固有名詞の正本】\n以下はユーザーが入力欄で登録した確定情報です。文字起こしより常に優先し、表記揺れを推測・補正・別漢字化してはいけません。記事内、SEO情報、画像指示のすべてで一字一句同じ表記を使ってください。\n会社名: ${source.challengerCompany}\n役職: ${source.challengerRole}\n出演者名: ${source.challengerName}\n正式な一組表記: ${identity}\nスペシャルゲスト（入力がある場合だけ使用）: ${source.specialGuest || "なし"}\nMC（入力がある場合だけ使用）: ${source.mcName || "なし"}\n番組名は必ず英語の「A TRUTH STORY」とし、カタカナ表記や「A TRUE STORY」は使いません。\n\n動画タイトル: ${source.title}\n動画URL: ${source.url}\n動画概要（動画投稿者の記載）:\n${source.description.slice(0, 30000) || "取得なし"}\n動画目次・チャプター:\n${source.chapters.slice(0, 12000) || "取得なし"}\n文字起こし（固有名詞は誤変換を含む可能性があるため正本に必ず合わせる）:\n${source.transcript.slice(0, 90000)}\n\n動画概要・目次・文字起こしを相互に照合し、概要と各チャプターの流れを記事構成へ反映してください。出演者を本文で紹介するときは必ず正式な一組表記「${identity}」を使い、文字起こし由来の別表記は使用しません。任意出演者は入力値がある場合だけ記載します。\n\nJSONオブジェクトだけを返してください。キーは title,titleTag,metaDescription,slug,mainKeyword,relatedKeywords,searchIntent,reader,angle,catchCopy,introductionHtml,sections,conclusionHtml。sectionsは必ず4〜6件で、各要素は heading,html,imagePrompt,altText。最初の4件は画像を1枚ずつ配置するため、見出し・論点・imagePromptが互いに重複しないようにしてください。headingはH2本文のみ（HTMLタグなし）、htmlはp/ul/ol/blockquote/strong/aだけを使う本文。本文には自然な要約・具体例・引用可能な発言・結論を含め、一次情報で確認できないことは書きません。metaDescriptionは90〜140字、titleTagは62字以内。imagePromptには、そのH2に対応する動画内の実際の対談場面として望ましい人物・構図・話題を簡潔に記述します。出力前に、誤字脱字、助詞、英語スペル、会社名、役職、出演者名、A TRUTH STORY表記を必ず再点検し、確定情報と異なる固有名詞をすべて修正してください。`;
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -630,7 +646,6 @@ async function generateImages(
   apiKey: string,
   articleId: string,
   article: GeneratedArticle,
-  count: number,
   source: {
     thumbnailUrl: string;
     videoId: string;
@@ -664,13 +679,18 @@ async function generateImages(
       alt: `${article.title}｜${exactIdentity(source)}｜A TRUTH STORY PART ${source.articleIndex + 1}`,
       prompt: `動画内の実写フレームを元に、${exactIdentity(source)}を正確に表記した経営者インタビューのファーストビュー画像（A TRUTH STORY / PART ${source.articleIndex + 1}）`,
     },
-    ...article.sections.map((section) => ({
+    ...article.sections.slice(0, IMAGES_PER_ARTICLE - 1).map((section) => ({
       kind: "section",
       heading: section.heading,
       alt: section.altText,
       prompt: `動画内の実際の対談場面。記事セクション「${section.heading}」に対応する実写フレーム（各セクション最大1枚）。`,
+      visualBrief: section.imagePrompt,
     })),
-  ].slice(0, count);
+  ];
+  if (prompts.length !== IMAGES_PER_ARTICLE)
+    throw new Error(
+      `画像5枚に必要なH2が不足しています（現在${prompts.length - 1}件）。`,
+    );
   const images: Array<{
     id: string;
     kind: string;
@@ -691,6 +711,7 @@ async function generateImages(
               source,
               item.heading,
               index - 1,
+              "visualBrief" in item ? item.visualBrief : "",
             );
     const imageId = id(),
       key = `articles/${articleId}/${item.kind}-${index}.${asset.extension}`;
@@ -1067,12 +1088,14 @@ async function youtubeVideoFrame(
     )
       throw new Error("storyboard level invalid");
     const safeRatio = Math.min(0.95, Math.max(0.05, ratio)),
-      frameIndex = Math.min(
-        count - 1,
-        preferredSeconds > 0
-          ? Math.max(0, Math.round((preferredSeconds * 1000) / intervalMs))
-          : Math.floor(count * safeRatio),
+      preferredFrame = Math.max(
+        0,
+        Math.round((preferredSeconds * 1000) / intervalMs),
       ),
+      frameIndex =
+        preferredSeconds > 0 && preferredFrame < count
+          ? preferredFrame
+          : Math.min(count - 1, Math.floor(count * safeRatio)),
       perSheet = columns * rows,
       sheetIndex = Math.floor(frameIndex / perSheet),
       tileIndex = frameIndex % perSheet,
@@ -1218,10 +1241,12 @@ async function createFeaturedImageAsset(
   article: Pick<GeneratedArticle, "title" | "catchCopy">,
 ): Promise<ImageAsset> {
   source.challengerName = canonicalChallengerName(source);
-  const frame = await youtubeVideoFrame(
+  const totalSlots = Math.max(1, source.articleCount * IMAGES_PER_ARTICLE),
+    globalSlot = source.articleIndex * IMAGES_PER_ARTICLE,
+    frame = await youtubeVideoFrame(
       source.videoId,
-      (source.articleIndex + 0.5) / Math.max(1, source.articleCount),
-      youtubeStartSeconds(source.videoUrl) + source.articleIndex * 20,
+      (globalSlot + 0.5) / totalSlots,
+      youtubeStartSeconds(source.videoUrl) + globalSlot * 113 + 17,
     ),
     headline = article.catchCopy || article.title,
     challenger = await challengerReferenceImage(source.challengerImageKey),
@@ -1229,10 +1254,12 @@ async function createFeaturedImageAsset(
     inputs = challenger ? [frameInput, challenger] : [frameInput],
     referenceInstruction = challenger
       ? "画像2は挑戦者本人の参照写真です。画像2の顔立ち・輪郭・目鼻・髪型を本人確認の正本として使い、画像1の対談風景にいる同一人物を挑戦者として明瞭に再現してください。"
-      : "画像1の対談風景に写っている人物の本人性を維持してください。";
+      : "画像1の対談風景に写っている人物の本人性を維持してください。",
+    featuredPlan =
+      FEATURED_SHOT_PLANS[source.articleIndex % FEATURED_SHOT_PLANS.length];
   const edited = await editWithGptImage2(
     apiKey,
-    `画像1はYouTube動画内から取得した実際の対談フレームです。${referenceInstruction} 経営者インタビュー記事用の高精細な16:9横長写真に仕上げてください。挑戦者は右半分に大きく、顔と目に正確にピントが合い、毛髪・肌・衣服の細部まで鮮明に見える自然な写真にします。元の対談会場、照明、服装、出演者の関係を維持し、実在しない人物を追加しません。ぼかし、ソフトフォーカス、被写界深度ぼけ、モーションブラー、にじみ、二重像、半透明人物、顔の重複、身体の重複、過度な美肌補正、イラスト化を禁止します。左半分は後工程の文字組み用に人物のいない明るい背景として確保します。文字、ロゴ、字幕、記号、透かしは一切描きません。`,
+    `画像1はYouTube動画内から取得した実際の対談フレーム（${frame.sourceDescription}）です。${referenceInstruction} 経営者インタビュー記事用の高精細な16:9横長写真に仕上げてください。このPART専用の構図は「${featuredPlan}」です。アイキャッチと4枚のH2画像はすべて別の動画時刻・別のカメラ距離・別の人物配置にし、同一フレーム、同じポーズ、左右反転だけの画像、切り抜き範囲だけを変えた近似画像を使用しません。挑戦者の顔と目に正確にピントを合わせ、毛髪・肌・衣服の細部まで鮮明に見える自然な写真にします。元の対談会場、照明、服装、出演者の関係を維持し、実在しない人物を追加しません。ぼかし、ソフトフォーカス、被写界深度ぼけ、モーションブラー、にじみ、二重像、半透明人物、顔の重複、身体の重複、過度な美肌補正、イラスト化を禁止します。左半分は後工程の文字組み用に人物のいない明るい背景として確保します。文字、ロゴ、字幕、記号、透かしは一切描きません。`,
     inputs,
     "GPT Image 2ファーストビュー画像編集APIエラー",
   );
@@ -1253,30 +1280,30 @@ async function createSectionImageAsset(
   },
   heading: string,
   sectionIndex: number,
+  visualBrief = "",
 ): Promise<ImageAsset> {
-  const frame = await youtubeVideoFrame(
+  const totalSlots = Math.max(1, source.articleCount * IMAGES_PER_ARTICLE),
+    globalSlot =
+      source.articleIndex * IMAGES_PER_ARTICLE + sectionIndex + 1,
+    frame = await youtubeVideoFrame(
       source.videoId,
-      Math.min(
-        0.95,
-        Math.max(
-          0.05,
-          (source.articleIndex + (sectionIndex + 1) / 7) /
-            Math.max(1, source.articleCount),
-        ),
-      ),
-      youtubeStartSeconds(source.videoUrl) +
-        source.articleIndex * 60 +
-        (sectionIndex + 1) * 75,
+      (globalSlot + 0.5) / totalSlots,
+      youtubeStartSeconds(source.videoUrl) + globalSlot * 113 + 17,
     ),
     challenger = await challengerReferenceImage(source.challengerImageKey),
     frameInput: ReferenceImageAsset = frame,
     inputs = challenger ? [frameInput, challenger] : [frameInput],
     referenceInstruction = challenger
       ? `画像2は挑戦者「${canonicalChallengerName(source)}」本人の参照写真です。画像2を本人確認の正本として、画像1の対談場面の同一人物を正確に保ってください。`
-      : "画像1に写る出演者本人の顔立ちを維持してください。";
+      : "画像1に写る出演者本人の顔立ちを維持してください。",
+    shotPlan =
+      SECTION_SHOT_PLANS[sectionIndex % SECTION_SHOT_PLANS.length],
+    excludedPlans = SECTION_SHOT_PLANS.filter(
+      (_, index) => index !== sectionIndex % SECTION_SHOT_PLANS.length,
+    ).join("／");
   return editWithGptImage2(
     apiKey,
-    `画像1はYouTube動画内の実際の対談場面です。${referenceInstruction} 記事セクション「${heading}」に合う瞬間として、元の対談風景を自然で高精細な16:9写真に再構成してください。話者と聞き手の自然な視線・姿勢・距離感を保ち、顔、目、髪、衣服、椅子、背景の輪郭をくっきり描写します。ぼかし、ソフトフォーカス、被写界深度ぼけ、モーションブラー、にじみ、二重像、半透明人物、顔や身体の重複、架空人物、イラスト化、字幕、文字、ロゴ、透かしを禁止します。全員に十分なピントが合った、実写の取材写真として仕上げてください。`,
+    `画像1はYouTube動画内から取得した実際の対談フレーム（${frame.sourceDescription}）です。${referenceInstruction} 記事セクション「${heading}」に合う瞬間として、元の対談風景を自然で高精細な16:9写真に再構成してください。セクション固有の内容は「${visualBrief || heading}」です。この画像だけの必須構図は「${shotPlan}」です。ほかのH2画像で使う「${excludedPlans}」の構図にはせず、アイキャッチとも別の画角にしてください。5枚すべてで同一フレーム、同じポーズ、同じ人物配置、左右反転だけの画像、切り抜き範囲だけを変えた近似画像を禁止します。話者と聞き手の自然な視線・姿勢・距離感を保ち、顔、目、髪、衣服、椅子、背景の輪郭をくっきり描写します。ぼかし、ソフトフォーカス、被写界深度ぼけ、モーションブラー、にじみ、二重像、半透明人物、顔や身体の重複、架空人物、イラスト化、字幕、文字、ロゴ、透かしを禁止します。全員に十分なピントが合った、実写の取材写真として仕上げてください。`,
     inputs,
     "GPT Image 2セクション画像編集APIエラー",
   );
@@ -1385,6 +1412,7 @@ export async function regenerateArticleImage(
       },
       heading,
       sectionIndex,
+      prompt,
     );
   }
   const key = `articles/${articleId}/${kind}-${Date.now()}.${asset.extension}`;
@@ -1558,7 +1586,7 @@ export async function createUnifiedProduction(
       "挑戦者の参照画像を確認できませんでした。画像を選び直してください。",
     );
   const articleCount = clamp(input.article_limit, 1),
-    imageCount = clamp(input.image_count, 1),
+    imageCount = IMAGES_PER_ARTICLE,
     metadata = await getYouTubeMetadata(request, url, {
       title: text(input.youtube_title, 300),
       description: text(input.youtube_description, 30000),
@@ -1826,7 +1854,7 @@ export async function createUnifiedProduction(
           .run();
         const imageResult = await retry(
           () =>
-            generateImages(openAiKey, articleId, generated, imageCount, {
+            generateImages(openAiKey, articleId, generated, {
               thumbnailUrl: metadata.thumbnailUrl,
               videoId: metadata.videoId,
               videoUrl: url,

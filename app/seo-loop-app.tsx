@@ -918,13 +918,12 @@ function Studio({
           <input
             name="image_count"
             type="number"
-            min="1"
-            max="5"
-            defaultValue="3"
-            required
+            value="5"
+            readOnly
+            aria-readonly="true"
           />
           <small className="field-help">
-            1枚目は動画内の実写フレームから作る16:9ファーストビュー、2枚目以降は各H2に1枚までの実際の対談場面です。
+            5枚固定です。1枚目は16:9ファーストビュー、残り4枚は別々の動画時刻・構図・カメラ距離を使ったH2画像です。同じ画像や似た構図は使用しません。
           </small>
         </label>
         <label className="wide">
