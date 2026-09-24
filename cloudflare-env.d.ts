@@ -10,6 +10,7 @@ declare namespace Cloudflare {
     DB: D1Database;
     FILES: R2Bucket;
     IMAGES: ImagesBinding;
+    BROWSER: Fetcher;
     ASSETS: Fetcher;
     DATA_ENCRYPTION_KEY?: string;
     ANTHROPIC_API_KEY?: string;

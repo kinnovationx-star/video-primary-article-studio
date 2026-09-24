@@ -21,6 +21,7 @@ import {
 } from "./integrations";
 import { rawMcpStructuredValue } from "./serp-provider";
 import { UbersuggestMcpClient } from "../cloud-runner/src/ubersuggest-mcp";
+import puppeteer from "@cloudflare/puppeteer";
 
 type Json = Record<string, unknown>;
 type Section = {
@@ -470,6 +471,49 @@ function headlineLines(value: string) {
   return lines.length ? lines : ["動画で語られた挑戦の物語"];
 }
 
+async function renderFeaturedTypographyInBrowser(
+  image: ImageAsset,
+  source: {
+    challengerCompany: string;
+    challengerRole: string;
+    challengerName: string;
+    articleIndex: number;
+  },
+  headline: string,
+): Promise<ImageAsset> {
+  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
+  try {
+    for (let attempt = 1; attempt <= 3; attempt++)
+      try {
+        browser = await puppeteer.launch(runtime().BROWSER);
+        break;
+      } catch (error) {
+        if (attempt === 3) throw error;
+        await new Promise((resolve) => setTimeout(resolve, attempt * 1200));
+      }
+    if (!browser) throw new Error("Browser Renderingを開始できませんでした。");
+    const page = await browser.newPage();
+    await page.setViewport({ width: 2048, height: 1152, deviceScaleFactor: 1 });
+    await page.setContent(`<!doctype html><html lang="ja"><head><meta charset="utf-8"><style>
+      *{box-sizing:border-box}html,body{margin:0;width:2048px;height:1152px;overflow:hidden;background:#fff}body{font-family:"Noto Sans CJK JP","Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif}.hero{position:relative;width:2048px;height:1152px;background-image:url("data:${image.contentType};base64,${bytesBase64(image.bytes)}");background-size:cover;background-position:center}.panel{position:absolute;inset:0 auto 0 0;width:1035px;padding:58px 100px 0 72px;background:linear-gradient(104deg,rgba(255,253,250,.98) 0%,rgba(255,253,250,.96) 82%,rgba(255,253,250,0) 100%)}.label{display:inline-block;margin-left:-72px;padding:24px 86px 22px 72px;background:#102b47;color:#fff7df;font-family:"Noto Serif CJK JP","Hiragino Mincho ProN","Yu Mincho",serif;font-size:70px;font-weight:700;line-height:1}.interview{display:block;margin:12px 0 30px;color:#b69237;font-family:Georgia,serif;font-size:31px;letter-spacing:14px}.headline{max-width:780px;margin:0;color:#102b47;font-family:"Noto Serif CJK JP","Hiragino Mincho ProN","Yu Mincho",serif;font-size:65px;font-weight:700;line-height:1.32;letter-spacing:.01em}.rule{width:720px;height:3px;margin:28px 0;background:#c5a34e}.company,.role{color:#102b47;font-size:33px;font-weight:700;line-height:1.45}.name{margin-top:8px;color:#102b47;font-family:"Noto Serif CJK JP","Hiragino Mincho ProN","Yu Mincho",serif;font-size:74px;font-weight:700;line-height:1.15}.brand{position:absolute;left:0;bottom:0;width:950px;height:122px;padding:37px 0 0 72px;background:#102b47;color:#fff7df;font-family:Georgia,serif;font-size:43px;font-weight:700;letter-spacing:7px}.part{position:absolute;left:680px;bottom:0;width:430px;height:122px;padding:39px 0 0 110px;clip-path:polygon(18% 0,100% 0,82% 100%,0 100%);background:#d7b55b;color:#102b47;font-family:Georgia,serif;font-size:40px;font-weight:700;white-space:nowrap}
+    </style></head><body><main class="hero"><section class="panel"><div class="label">経営者インタビュー</div><span class="interview">interview</span><h1 class="headline">${escapeHtml(headline.slice(0, 52))}</h1><div class="rule"></div><div class="company">${escapeHtml(source.challengerCompany)}</div><div class="role">${escapeHtml(source.challengerRole)}</div><div class="name">${escapeHtml(canonicalChallengerName(source))}</div></section><div class="brand">A TRUTH STORY</div><div class="part">PART ${source.articleIndex + 1}</div></main></body></html>`, {
+      waitUntil: "load",
+    });
+    await page.evaluate(() => document.fonts.ready);
+    const screenshot = await page.screenshot({
+      type: "png",
+      captureBeyondViewport: false,
+    });
+    return {
+      bytes: new Uint8Array(screenshot),
+      contentType: "image/png",
+      extension: "png",
+    };
+  } finally {
+    if (browser) await browser.close().catch(() => undefined);
+  }
+}
+
 async function applyExactFeaturedTypography(
   image: ImageAsset,
   source: {
@@ -480,6 +524,15 @@ async function applyExactFeaturedTypography(
   },
   headline: string,
 ): Promise<ImageAsset> {
+  try {
+    return await renderFeaturedTypographyInBrowser(
+      image,
+      source,
+      headline,
+    );
+  } catch (error) {
+    console.error("Browser Rendering typography failed", String(error));
+  }
   const images = runtime().IMAGES;
   if (!images) return image;
   const lines = headlineLines(headline),
