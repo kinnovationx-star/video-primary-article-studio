@@ -963,11 +963,14 @@ async function createFeaturedImageAsset(
     part = `PART ${source.articleIndex + 1}`,
     identity = exactIdentity(source),
     headline = article.catchCopy || article.title,
+    rareKanjiHint = source.challengerName.includes("﨑")
+      ? "氏名の『﨑』はUnicode U+FA11のたつさきです。一般的な『崎』へ絶対に置き換えないでください。"
+      : "",
     form = new FormData();
   form.append("model", IMAGE_MODEL);
   form.append(
     "prompt",
-    `アップロード画像はYouTube動画内から取得した実際の対談フレームです。この実写フレームを写真素材として使い、経営者インタビュー記事の洗練されたファーストビュー画像を作ってください。厳密な16:9横長です。出演者本人の顔立ち、年齢、髪型、表情、服装、肌の色、本人性を変えず、架空の人物を追加しないでください。写真は自然で高品質に補正し、話している経営者または出演者が明瞭に見えるトリミングにします。暖かい白・ベージュを基調に、紺またはゴールドをアクセントにした信頼感のある日本語編集デザインにします。参考構成は、右側に実写人物、左側に読みやすい見出しパネルです。\n\n画像内に入れる文字は次の確定文字だけです。誤字、脱字、別漢字、勝手な省略を禁止します。\n「経営者インタビュー」\n「interview」\n「${headline}」\n「${source.challengerCompany}」\n「${source.challengerRole}」\n「${source.challengerName}」\n「A TRUTH STORY」\n「${part}」\n\n「A TRUE STORY」やカタカナの番組名、文字起こし由来の別名、偽ロゴ、透かし、余計なコピーは入れません。確定人物表記は「${identity}」です。すべての文字を画像端から十分離し、日本語の可読性とスペルを最終確認してください。`,
+    `アップロード画像はYouTube動画内から取得した実際の対談フレームです。この実写フレームを写真素材として使い、経営者インタビュー記事の洗練されたファーストビュー画像を作ってください。厳密な16:9横長です。出演者本人の顔立ち、年齢、髪型、表情、服装、肌の色、本人性を変えず、架空の人物を追加しないでください。写真は自然で高品質に補正し、話している経営者または出演者が明瞭に見えるトリミングにします。暖かい白・ベージュを基調に、紺またはゴールドをアクセントにした信頼感のある日本語編集デザインにします。参考構成は、右側に実写人物、左側に読みやすい見出しパネルです。\n\n画像内に入れる文字は次の確定文字だけです。誤字、脱字、別漢字、勝手な省略を禁止します。\n「経営者インタビュー」\n「interview」\n「${headline}」\n「${source.challengerCompany}」\n「${source.challengerRole}」\n「${source.challengerName}」\n「A TRUTH STORY」\n「${part}」\n\n${rareKanjiHint}\n「A TRUE STORY」やカタカナの番組名、文字起こし由来の別名、偽ロゴ、透かし、余計なコピーは入れません。確定人物表記は「${identity}」です。すべての文字を画像端から十分離し、日本語の可読性とスペルを最終確認してください。`,
   );
   form.append(
     "image[]",
