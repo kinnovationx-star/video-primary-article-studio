@@ -91,12 +91,24 @@ const brandEnglish = (value: unknown) =>
     .replace(/A\s+TRUE\s+STORY/gi, "A TRUTH STORY")
     .replace(/ア[・\s]?トゥルー(?:ス)?[・\s]?ストーリー/gi, "A TRUTH STORY")
     .replace(/トゥルース[・\s]?ストーリー/gi, "A TRUTH STORY");
+const canonicalChallengerName = (source: {
+  challengerRole: string;
+  challengerName: string;
+}) => {
+  const role = source.challengerRole.trim(),
+    name = source.challengerName.trim();
+  return role && name.startsWith(role) ? name.slice(role.length).trim() : name;
+};
 const exactIdentity = (source: {
   challengerCompany: string;
   challengerRole: string;
   challengerName: string;
 }) =>
-  [source.challengerCompany, source.challengerRole, source.challengerName]
+  [
+    source.challengerCompany,
+    source.challengerRole,
+    canonicalChallengerName(source),
+  ]
     .filter(Boolean)
     .join(" ");
 
@@ -367,6 +379,7 @@ async function generateArticle(
   },
   index: number,
 ) {
+  source.challengerName = canonicalChallengerName(source);
   const focus = source.keywords[index % source.keywords.length] || source.title;
   const identity = exactIdentity(source);
   const prompt = `あなたは校正能力の高い日本語SEO編集者です。次の動画一次情報だけを根拠に、重複しない記事${index + 1}本目（PART ${index + 1}）を作成してください。動画にない数値・人物属性・効果・断定を補ってはいけません。主軸キーワードは「${focus}」。関連候補は ${source.keywords.slice(0, 10).join("、")}（取得元: ${source.provider}）。方向性: ${source.direction || "動画内容を忠実に整理"}\n\n【最優先・固有名詞の正本】\n以下はユーザーが入力欄で登録した確定情報です。文字起こしより常に優先し、表記揺れを推測・補正・別漢字化してはいけません。記事内、SEO情報、画像指示のすべてで一字一句同じ表記を使ってください。\n会社名: ${source.challengerCompany}\n役職: ${source.challengerRole}\n出演者名: ${source.challengerName}\n正式な一組表記: ${identity}\nスペシャルゲスト（入力がある場合だけ使用）: ${source.specialGuest || "なし"}\nMC（入力がある場合だけ使用）: ${source.mcName || "なし"}\n番組名は必ず英語の「A TRUTH STORY」とし、カタカナ表記や「A TRUE STORY」は使いません。\n\n動画タイトル: ${source.title}\n動画URL: ${source.url}\n動画概要（動画投稿者の記載）:\n${source.description.slice(0, 30000) || "取得なし"}\n動画目次・チャプター:\n${source.chapters.slice(0, 12000) || "取得なし"}\n文字起こし（固有名詞は誤変換を含む可能性があるため正本に必ず合わせる）:\n${source.transcript.slice(0, 90000)}\n\n動画概要・目次・文字起こしを相互に照合し、概要と各チャプターの流れを記事構成へ反映してください。出演者を本文で紹介するときは必ず正式な一組表記「${identity}」を使い、文字起こし由来の別表記は使用しません。任意出演者は入力値がある場合だけ記載します。\n\nJSONオブジェクトだけを返してください。キーは title,titleTag,metaDescription,slug,mainKeyword,relatedKeywords,searchIntent,reader,angle,catchCopy,introductionHtml,sections,conclusionHtml。sectionsは3〜6件で、各要素は heading,html,imagePrompt,altText。headingはH2本文のみ（HTMLタグなし）、htmlはp/ul/ol/blockquote/strong/aだけを使う本文。本文には自然な要約・具体例・引用可能な発言・結論を含め、一次情報で確認できないことは書きません。metaDescriptionは90〜140字、titleTagは62字以内。imagePromptには、そのH2に対応する動画内の実際の対談場面として望ましい人物・構図・話題を簡潔に記述します。出力前に、誤字脱字、助詞、英語スペル、会社名、役職、出演者名、A TRUTH STORY表記を必ず再点検し、確定情報と異なる固有名詞をすべて修正してください。`;
@@ -942,6 +955,7 @@ async function createFeaturedImageAsset(
   },
   article: Pick<GeneratedArticle, "title" | "catchCopy">,
 ): Promise<ImageAsset> {
+  source.challengerName = canonicalChallengerName(source);
   const frame = await youtubeVideoFrame(
       source.videoId,
       (source.articleIndex + 0.5) / Math.max(1, source.articleCount),
