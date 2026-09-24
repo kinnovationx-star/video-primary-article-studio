@@ -231,6 +231,22 @@ export function youtubeVideoId(value: string) {
   return "";
 }
 
+function youtubeStartSeconds(value: string) {
+  try {
+    const raw = new URL(value).searchParams.get("t") || "",
+      numeric = Number(raw.replace(/s$/i, ""));
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+    const match = raw.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/i);
+    return match
+      ? Number(match[1] || 0) * 3600 +
+          Number(match[2] || 0) * 60 +
+          Number(match[3] || 0)
+      : 0;
+  } catch {
+    return 0;
+  }
+}
+
 function descriptionChapters(description: string) {
   return description
     .split(/\r?\n/)
@@ -611,6 +627,7 @@ async function generateImages(
   source: {
     thumbnailUrl: string;
     videoId: string;
+    videoUrl: string;
     articleIndex: number;
     articleCount: number;
     challengerCompany: string;
@@ -1003,6 +1020,7 @@ function decodeStoryboardSpec(value: string) {
 async function youtubeVideoFrame(
   videoId: string,
   ratio: number,
+  preferredSeconds = 0,
 ): Promise<VideoFrameAsset> {
   try {
     const watch = await fetch(
@@ -1046,7 +1064,12 @@ async function youtubeVideoFrame(
     )
       throw new Error("storyboard level invalid");
     const safeRatio = Math.min(0.95, Math.max(0.05, ratio)),
-      frameIndex = Math.min(count - 1, Math.floor(count * safeRatio)),
+      frameIndex = Math.min(
+        count - 1,
+        preferredSeconds > 0
+          ? Math.max(0, Math.round((preferredSeconds * 1000) / intervalMs))
+          : Math.floor(count * safeRatio),
+      ),
       perSheet = columns * rows,
       sheetIndex = Math.floor(frameIndex / perSheet),
       tileIndex = frameIndex % perSheet,
@@ -1104,6 +1127,7 @@ async function createFeaturedImageAsset(
   apiKey: string,
   source: {
     videoId: string;
+    videoUrl: string;
     articleIndex: number;
     articleCount: number;
     challengerCompany: string;
@@ -1116,6 +1140,7 @@ async function createFeaturedImageAsset(
   const frame = await youtubeVideoFrame(
       source.videoId,
       (source.articleIndex + 0.5) / Math.max(1, source.articleCount),
+      youtubeStartSeconds(source.videoUrl) + source.articleIndex * 20,
     ),
     headline = article.catchCopy || article.title,
     form = new FormData();
@@ -1236,6 +1261,7 @@ export async function regenerateArticleImage(
       apiKey,
       {
         videoId,
+        videoUrl: text(article.youtube_url, 1000),
         articleIndex,
         articleCount,
         challengerCompany: text(article.challenger_company, 240),
@@ -1628,6 +1654,7 @@ export async function createUnifiedProduction(
               source: url,
               title,
               videoId: metadata.videoId,
+              videoUrl: url,
               descriptionCharacters: metadata.description.length,
               chapters: metadata.chapters.split(/\r?\n/).filter(Boolean)
                 .length,
@@ -1690,6 +1717,7 @@ export async function createUnifiedProduction(
             generateImages(openAiKey, articleId, generated, imageCount, {
               thumbnailUrl: metadata.thumbnailUrl,
               videoId: metadata.videoId,
+              videoUrl: url,
               articleIndex: index,
               articleCount,
               challengerCompany,
