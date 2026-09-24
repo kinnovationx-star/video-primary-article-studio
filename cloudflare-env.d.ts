@@ -9,6 +9,7 @@ declare namespace Cloudflare {
   interface Env {
     DB: D1Database;
     FILES: R2Bucket;
+    IMAGES: ImagesBinding;
     ASSETS: Fetcher;
     DATA_ENCRYPTION_KEY?: string;
     ANTHROPIC_API_KEY?: string;
