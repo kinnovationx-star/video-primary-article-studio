@@ -1,5 +1,20 @@
 # 動画一次情報記事制作アプリ — 引き継ぎコンテキスト
 
+> **最新の正本は `CODEX_HANDOFF.md`（2026-09-28）。まずそちらを読むこと。**
+
+> **2026-09-27 更新（最新・正本）: ブラウザー制作方式へ全面移行**
+>
+> - 記事・画像はAPIを使わず、Chrome拡張 v0.2.0（`pc-browser-extension/`）がログイン済みの claude.ai / chatgpt.com の画面を操作して作る。Claude API・OpenAI APIは一切呼ばない。
+> - 流れ: 「記事を作成する」→ Claude（1通目: 資料と企画、以降1本ずつ記事）→ 記事をD1へ保存 → ChatGPT（記事ごとに5枚、本人参照画像と動画フレームを自動添付）→ 画像をR2へ保存 → WordPressへ下書き保存（REST API）→ 外部確認URL発行。進捗はlocalStorage `video-studio-pipeline-v2` にチェックポイント保存し、再読み込みで続きから再開。
+> - 外部確認URLは `/api/preview/<articleId>` の恒久リンク。開くたびにPublic Post Previewの新しいURL（48時間有効）を発行してリダイレクトする（旧URLは期限切れで403になっていた）。
+> - 主要ファイル: `lib/browser-pipeline.ts`（依頼文・Claude回答の解析）、`lib/browser-production.ts`（D1/R2保存・WordPress下書き・YouTube公開情報）、`app/api/[[...path]]/route.ts`（上記のみのAPI）、`app/seo-loop-app.tsx`（画面とパイプライン）、`pc-browser-extension/`。
+> - マイグレーション `0012_browser_production.sql`（article_images.section_index、articles.conversation_url）適用済み。
+> - テスト: `node --test tests/unified-production.test.mjs tests/browser-mode.test.mjs tests/browser-extension.test.mjs tests/production-response.test.mjs`（30件）。
+> - Claude/ChatGPTの画面構造が変わったら `pc-browser-extension/assistant-page.js` のセレクターを更新し、manifestのversionを上げて `npm run build`（ZIPも再生成）。
+> - 2026-09-27追記: キーワード分析はAPIの実測データを使う方式に変更。流れは「Claude（新規会話）: 文字起こしを全話題の表に整理＋シードキーワード」→ `POST /api/seo/research`（`lib/seo-research.ts`: Search Console直近90日のクエリ・ページ、GA4の自然検索LP、Ubersuggest MCPの関連語・検索数・SD・SERP）→「Claude（同じ会話）: 実測データ分析→キーワード選定→話題の割当表（漏れゼロ）→記事を1本ずつ」。レポート画面も同じAPIデータをClaudeで分析。Google/UbersuggestのOAuth再接続・対象選択は連携設定から可能。
+> - 2026-09-27: ユーザー指示で記事ライブラリー（articles / article_images / production_projects 等）を全削除。削除前のD1全体を `backups/d1-before-library-reset-2026-09-27.sql` に保存（git管理外）。WordPress下書きは削除していない。
+> - 以下の旧記述（API生成・GPT Image 2 API）は履歴として残す。`app/api/[[...path]]/legacy-api.ts` は参照されない旧実装。
+
 更新日: 2026-09-25（Asia/Tokyo）
 
 ## 1. このアプリの目的

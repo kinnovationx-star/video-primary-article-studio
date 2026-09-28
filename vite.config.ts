@@ -2,8 +2,8 @@ import vinext from "vinext";
 import { defineConfig } from "vite";
 import { sites } from "./build/sites-vite-plugin";
 
-const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
-  "00000000-0000-4000-8000-000000000000";
+const VIDEO_PRIMARY_ARTICLE_DATABASE_ID =
+  "91eb7e46-0db4-4304-b5d2-ee0a9fc236e0";
 
 // These generic binding names support local development only. Configure the
 // actual D1/R2 resources in each client's deployment configuration.
@@ -21,7 +21,7 @@ const localBindingConfig = {
         {
           binding: d1,
           database_name: "video-primary-article-db",
-          database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
+          database_id: VIDEO_PRIMARY_ARTICLE_DATABASE_ID,
         },
       ]
     : [],
