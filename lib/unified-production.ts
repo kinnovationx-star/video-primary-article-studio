@@ -2,6 +2,7 @@ import {
   articleDraft,
   id,
   now,
+  parse,
   runtime,
   text,
   wordTokens,
@@ -22,6 +23,7 @@ import {
 import { rawMcpStructuredValue } from "./serp-provider";
 import { UbersuggestMcpClient } from "../cloud-runner/src/ubersuggest-mcp";
 import puppeteer from "@cloudflare/puppeteer";
+import { parseGeneratedJson, generatedText, settleProductionBatch } from "./production-response";
 
 type Json = Record<string, unknown>;
 type Section = {
@@ -143,7 +145,7 @@ export const sanitizeArticleHtml = (value: unknown) =>
     .replace(/\son\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
     .replace(/javascript:/gi, "")
     .trim();
-const escapeHtml = (value: unknown) =>
+export const escapeHtml = (value: unknown) =>
   String(value ?? "").replace(
     /[&<>"']/g,
     (character) =>
@@ -161,7 +163,7 @@ const slugify = (value: string) =>
 const clamp = (value: unknown, fallback: number) =>
   Math.min(5, Math.max(1, Number(value) || fallback));
 
-async function retry<T>(operation: () => Promise<T>, attempts = 2) {
+export async function retry<T>(operation: () => Promise<T>, attempts = 2) {
   let lastError: unknown;
   for (let attempt = 1; attempt <= attempts; attempt++)
     try {
@@ -175,15 +177,31 @@ async function retry<T>(operation: () => Promise<T>, attempts = 2) {
 }
 
 function jsonFromText(value: string) {
-  const cleaned = value
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
-  const start = cleaned.indexOf("{"),
-    end = cleaned.lastIndexOf("}");
-  if (start < 0 || end <= start)
-    throw new Error("AIの記事データを解析できませんでした。");
-  return JSON.parse(cleaned.slice(start, end + 1)) as Json;
+  return parseGeneratedJson(value);
+}
+
+async function repairClaudeJson(apiKey: string, model: string, value: string) {
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 8000,
+      messages: [{
+        role: "user",
+        content: `次の出力はJSONとして壊れています。内容・固有名詞・HTMLを要約、追加、削除せず、JSON構文だけを修復してください。説明やMarkdownは一切出さず、修復済みのJSONオブジェクトだけを返してください。\n\n${value.slice(0, 90000)}`,
+      }],
+    }),
+    signal: AbortSignal.timeout(110_000),
+  });
+  const payload = (await response.json().catch(() => ({}))) as Json;
+  if (!response.ok) throw new Error("AIの記事データを修復できませんでした。");
+  const content = generatedText(payload);
+  return jsonFromText(content);
 }
 
 function normalizeArticle(
@@ -269,7 +287,7 @@ function youtubeStartSeconds(value: string) {
   }
 }
 
-function descriptionChapters(description: string) {
+export function descriptionChapters(description: string) {
   return description
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -330,6 +348,22 @@ export async function getYouTubeMetadata(
   };
 }
 
+const keywordNoise = new Set([
+  "episode", "episodes", "part", "youtube", "動画", "対談", "インタビュー",
+  "atruthstory", "a truth story", "tko", "official", "shorts",
+]);
+
+function usableKeyword(value: unknown) {
+  const keyword = text(value, 120).replace(/\s+/g, " ").trim();
+  const normalized = keyword.toLocaleLowerCase("ja-JP").replace(/[【】\u005b\u005d()（）「」『』!！?？:】【：・,，.。]/g, "").trim();
+  if (keyword.length < 2 || normalized.length < 2 || keywordNoise.has(normalized)) return "";
+  // Labels such as "EPISODE 0" must never become an SEO keyword.  A label
+  // containing no Japanese text is only allowed when it has multiple words.
+  if (/^(?:episode|part)\s*\d*$/i.test(keyword)) return "";
+  if (!/[\u3040-\u30ff\u3400-\u9fff]/.test(keyword) && keyword.split(/\s+/).length < 2) return "";
+  return keyword;
+}
+
 function collectKeywords(value: unknown, output: string[] = []): string[] {
   if (output.length >= 20) return output;
   if (Array.isArray(value))
@@ -340,10 +374,42 @@ function collectKeywords(value: unknown, output: string[] = []): string[] {
         /^(?:keyword|query|term|name)$/i.test(key) &&
         typeof nested === "string"
       )
-        output.push(text(nested, 120));
+        output.push(usableKeyword(nested));
       else collectKeywords(nested, output);
     }
-  return [...new Set(output.filter((item) => item.length >= 2))].slice(0, 20);
+  return [...new Set(output.filter(Boolean))].slice(0, 20);
+}
+
+type KeywordResearch = {
+  keywords: string[];
+  provider: string;
+  evidence: string;
+};
+
+async function selectedGoogleResource(provider: "gsc" | "ga4") {
+  const profile = await runtime().DB.prepare("SELECT public_config FROM integration_profiles WHERE provider=? AND status='CONFIGURED'").bind(provider).first<{ public_config: string }>();
+  return text(parse(profile?.public_config || "{}", {} as Json).selectedResourceId, 600);
+}
+
+async function googleJson(url: string, accessToken: string, body: Json) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const payload = (await response.json().catch(() => ({}))) as Json;
+  if (!response.ok) throw new Error(text(asRecord(payload.error).message || `Google API error (${response.status})`, 160));
+  return payload;
+}
+
+function sourceTerms(title: string, direction: string, transcript: string) {
+  return [...new Set(wordTokens(`${title} ${direction} ${transcript.slice(0, 10000)}`).map(usableKeyword).filter(Boolean))].slice(0, 20);
+}
+
+function relatedToVideo(keyword: string, terms: string[]) {
+  const normalized = keyword.toLocaleLowerCase("ja-JP");
+  return terms.some((term) => term.length >= 2 && (normalized.includes(term.toLocaleLowerCase("ja-JP")) || term.toLocaleLowerCase("ja-JP").includes(normalized)));
 }
 
 async function keywordIdeas(
@@ -351,27 +417,53 @@ async function keywordIdeas(
   direction: string,
   transcript: string,
   count: number,
-) {
-  const local = wordTokens(
-    `${title} ${direction} ${transcript.slice(0, 6000)}`,
-  ).slice(0, Math.max(count, 8));
-  const seed = text(direction || title || local[0] || "動画内容", 120);
+  request: Request,
+): Promise<KeywordResearch> {
+  const terms = sourceTerms(title, direction, transcript);
+  const seed = terms.find((term) => /[\u3040-\u30ff\u3400-\u9fff]/.test(term)) || usableKeyword(title) || "動画内容";
+  const since = new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10);
+  const until = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
+  const gscRows: Array<{ keyword: string; clicks: number; impressions: number; position: number }> = [];
+  const ga4Pages: string[] = [];
+  const notices: string[] = [];
+  let live: string[] = [];
   try {
     const token = await getUbersuggestAccessToken();
-    const result = await new UbersuggestMcpClient(token).callKeywordSuggestions(
-      seed,
-    );
-    const live = collectKeywords(rawMcpStructuredValue(result.rawToolResult));
-    return {
-      keywords: [...new Set([...live, ...local])].slice(0, Math.max(count, 10)),
-      provider: "Ubersuggest MCP + 動画一次情報",
-    };
-  } catch {
-    return {
-      keywords: local.length ? local : [seed],
-      provider: "動画一次情報",
-    };
-  }
+    const response = await new UbersuggestMcpClient(token).callKeywordSuggestions(seed);
+    live = collectKeywords(rawMcpStructuredValue(response.rawToolResult)).filter((keyword) => relatedToVideo(keyword, terms));
+    notices.push(live.length ? "Ubersuggest候補取得済み" : "Ubersuggest候補に動画テーマとの一致なし");
+  } catch { notices.push("Ubersuggest未接続または候補未取得"); }
+  try {
+    const [token, site] = await Promise.all([getGoogleAccessToken(request), selectedGoogleResource("gsc")]);
+    if (!site) throw new Error("対象サイト未選択");
+    const data = await googleJson(`https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(site)}/searchAnalytics/query`, token, { startDate: since, endDate: until, dimensions: ["query"], rowLimit: 250 });
+    for (const row of Array.isArray(data.rows) ? data.rows.map(asRecord) : []) {
+      const keyword = usableKeyword(Array.isArray(row.keys) ? row.keys[0] : "");
+      if (keyword && relatedToVideo(keyword, terms)) gscRows.push({ keyword, clicks: Number(row.clicks || 0), impressions: Number(row.impressions || 0), position: Number(row.position || 100) });
+    }
+    notices.push(gscRows.length ? `Search Console実績 ${gscRows.length}件` : "Search Consoleにテーマ一致クエリなし");
+  } catch { notices.push("Search Console未接続・対象未選択・取得不可"); }
+  try {
+    const [token, property] = await Promise.all([getGoogleAccessToken(request), selectedGoogleResource("ga4")]);
+    if (!property) throw new Error("対象プロパティ未選択");
+    const resource = property.startsWith("properties/") ? property : `properties/${property}`;
+    const data = await googleJson(`https://analyticsdata.googleapis.com/v1beta/${resource}:runReport`, token, { dateRanges: [{ startDate: since, endDate: until }], dimensions: [{ name: "landingPagePlusQueryString" }], metrics: [{ name: "sessions" }, { name: "engagedSessions" }, { name: "keyEvents" }], orderBys: [{ metric: { metricName: "sessions" }, desc: true }], limit: 30 });
+    for (const row of Array.isArray(data.rows) ? data.rows.map(asRecord) : []) {
+      const page = text(asRecord(Array.isArray(row.dimensionValues) ? row.dimensionValues[0] : {}).value, 300);
+      if (page) ga4Pages.push(page);
+    }
+    notices.push(ga4Pages.length ? "GA4上位ランディングページ取得済み" : "GA4の対象期間にランディングページなし");
+  } catch { notices.push("GA4未接続・対象未選択・取得不可"); }
+  const scores = new Map<string, number>();
+  for (const keyword of terms) scores.set(keyword, (scores.get(keyword) || 0) + 8);
+  for (const keyword of live) scores.set(keyword, (scores.get(keyword) || 0) + 30);
+  for (const row of gscRows) scores.set(row.keyword, (scores.get(row.keyword) || 0) + 100 + Math.min(80, row.clicks * 4 + row.impressions / 10) + Math.max(0, 30 - row.position));
+  const keywords = [...scores.entries()].sort((a, b) => b[1] - a[1]).map(([keyword]) => keyword).filter(usableKeyword).slice(0, Math.max(count, 10));
+  return {
+    keywords: keywords.length ? keywords : [seed],
+    provider: "Search Console・GA4・Ubersuggest・動画一次情報",
+    evidence: `${notices.join(" / ")}。Search Console上位: ${gscRows.sort((a, b) => b.clicks - a.clicks || b.impressions - a.impressions).slice(0, 8).map((row) => `${row.keyword}(クリック${row.clicks}・表示${row.impressions}・順位${row.position.toFixed(1)})`).join("、") || "なし"}。GA4上位LP: ${ga4Pages.slice(0, 5).join("、") || "なし"}`,
+  };
 }
 
 async function anthropicModel(apiKey: string) {
@@ -410,6 +502,7 @@ async function generateArticle(
     direction: string;
     keywords: string[];
     provider: string;
+    keywordEvidence: string;
     challengerCompany: string;
     challengerRole: string;
     challengerName: string;
@@ -421,6 +514,7 @@ async function generateArticle(
   source.challengerName = canonicalChallengerName(source);
   const focus = source.keywords[index % source.keywords.length] || source.title;
   const identity = exactIdentity(source);
+  source.direction = `${source.direction || "動画内容を忠実に整理"}\nキーワード選定の実データ: ${source.keywordEvidence}`;
   const prompt = `あなたは校正能力の高い日本語SEO編集者です。次の動画一次情報だけを根拠に、重複しない記事${index + 1}本目（PART ${index + 1}）を作成してください。動画にない数値・人物属性・効果・断定を補ってはいけません。主軸キーワードは「${focus}」。関連候補は ${source.keywords.slice(0, 10).join("、")}（取得元: ${source.provider}）。方向性: ${source.direction || "動画内容を忠実に整理"}\n\n【最優先・固有名詞の正本】\n以下はユーザーが入力欄で登録した確定情報です。文字起こしより常に優先し、表記揺れを推測・補正・別漢字化してはいけません。記事内、SEO情報、画像指示のすべてで一字一句同じ表記を使ってください。\n会社名: ${source.challengerCompany}\n役職: ${source.challengerRole}\n出演者名: ${source.challengerName}\n正式な一組表記: ${identity}\nスペシャルゲスト（入力がある場合だけ使用）: ${source.specialGuest || "なし"}\nMC（入力がある場合だけ使用）: ${source.mcName || "なし"}\n番組名は必ず英語の「A TRUTH STORY」とし、カタカナ表記や「A TRUE STORY」は使いません。\n\n動画タイトル: ${source.title}\n動画URL: ${source.url}\n動画概要（動画投稿者の記載）:\n${source.description.slice(0, 30000) || "取得なし"}\n動画目次・チャプター:\n${source.chapters.slice(0, 12000) || "取得なし"}\n文字起こし（固有名詞は誤変換を含む可能性があるため正本に必ず合わせる）:\n${source.transcript.slice(0, 90000)}\n\n動画概要・目次・文字起こしを相互に照合し、概要と各チャプターの流れを記事構成へ反映してください。出演者を本文で紹介するときは必ず正式な一組表記「${identity}」を使い、文字起こし由来の別表記は使用しません。任意出演者は入力値がある場合だけ記載します。\n\nJSONオブジェクトだけを返してください。キーは title,titleTag,metaDescription,slug,mainKeyword,relatedKeywords,searchIntent,reader,angle,catchCopy,introductionHtml,sections,conclusionHtml。sectionsは必ず4〜6件で、各要素は heading,html,imagePrompt,altText。最初の4件は画像を1枚ずつ配置するため、見出し・論点・imagePromptが互いに重複しないようにしてください。headingはH2本文のみ（HTMLタグなし）、htmlはp/ul/ol/blockquote/strong/aだけを使う本文。本文には自然な要約・具体例・引用可能な発言・結論を含め、一次情報で確認できないことは書きません。metaDescriptionは90〜140字、titleTagは62字以内。imagePromptには、そのH2に対応する動画内の実際の対談場面として望ましい人物・構図・話題を簡潔に記述します。出力前に、誤字脱字、助詞、英語スペル、会社名、役職、出演者名、A TRUTH STORY表記を必ず再点検し、確定情報と異なる固有名詞をすべて修正してください。`;
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -445,14 +539,16 @@ async function generateArticle(
         240,
       ),
     );
-  const content = Array.isArray(payload.content)
-    ? payload.content
-        .map(asRecord)
-        .filter((item) => item.type === "text")
-        .map((item) => String(item.text || ""))
-        .join("\n")
-    : "";
-  const article = normalizeArticle(jsonFromText(content), focus, index);
+  const content = generatedText(payload);
+  let parsed: Json;
+  try {
+    parsed = jsonFromText(content);
+  } catch {
+    // Claude occasionally emits one malformed delimiter in a long HTML-rich
+    // response. Repair that exact response before regenerating the article.
+    parsed = await repairClaudeJson(apiKey, model, content);
+  }
+  const article = normalizeArticle(parsed, focus, index);
   const profile = `<p class="video-speaker-profile"><strong>出演者：</strong>${escapeHtml(identity)}</p>`;
   if (identity && !article.introductionHtml.includes(escapeHtml(identity)))
     article.introductionHtml = `${profile}${article.introductionHtml}`;
@@ -702,6 +798,18 @@ async function generateImages(
     extension: "png" | "jpg";
   }> = [];
   for (let index = 0; index < prompts.length; index++) {
+    // A retry starts at the first unfinished image, keeping completed R2/D1
+    // assets instead of charging for and duplicating all preceding images.
+    const saved = await runtime().DB.prepare(
+      "SELECT id,object_key FROM article_images WHERE article_id=? AND kind=? AND section_heading=? ORDER BY created_at DESC LIMIT 1",
+    ).bind(articleId, prompts[index].kind, prompts[index].heading).first<{ id: string; object_key: string }>();
+    if (saved && await runtime().FILES.head(saved.object_key)) {
+      const extension = saved.object_key.endsWith(".jpg") ? "jpg" : "png";
+      images.push({ id: saved.id, kind: prompts[index].kind, heading: prompts[index].heading,
+        alt: prompts[index].alt, key: saved.object_key, url: `/api/media/${saved.id}`,
+        contentType: extension === "jpg" ? "image/jpeg" : "image/png", extension });
+      continue;
+    }
     const item = prompts[index],
       asset =
         item.kind === "featured"
@@ -750,7 +858,7 @@ async function generateImages(
   return { images, warning: "" };
 }
 
-async function wordpressRequest(url: string, init: RequestInit) {
+export async function wordpressRequest(url: string, init: RequestInit) {
   const { response, payload } = await wordpressFetchJson(url, init),
     record = asRecord(payload);
   if (!response.ok)
@@ -937,7 +1045,7 @@ async function requestPublicPreview(
   };
 }
 
-async function enableWordPressPublicPreview(
+export async function enableWordPressPublicPreview(
   connection: WordPressConnection,
   postId: string,
 ) {
@@ -1209,14 +1317,14 @@ async function claudeJson(apiKey: string, prompt: string) {
         240,
       ),
     );
-  const content = Array.isArray(payload.content)
-    ? payload.content
-        .map(asRecord)
-        .filter((item) => item.type === "text")
-        .map((item) => String(item.text || ""))
-        .join("\n")
-    : "";
-  return { model, value: jsonFromText(content) };
+  const content = generatedText(payload);
+  let value: Json;
+  try {
+    value = jsonFromText(content);
+  } catch {
+    value = await repairClaudeJson(apiKey, model, content);
+  }
+  return { model, value };
 }
 
 export async function regenerateArticleSection(
@@ -1242,8 +1350,12 @@ export async function regenerateArticleSection(
       .filter(Boolean)
       .join(" "),
     prompt = `日本語SEO記事のH2セクションを再生成してください。動画の文字起こしだけを根拠にし、存在しない事実・数値・効果を追加しないでください。\n記事タイトル: ${text(row.title, 300)}\n主軸キーワード: ${text(row.main_keyword, 160)}\n対象H2: ${text(heading, 200)}\n現在の本文: ${text(currentHtml, 12000)}\n追加指示: ${text(instruction, 1000) || "読みやすく具体的に改善"}\n動画タイトル: ${text(row.youtube_title, 300)}\n動画URL: ${text(row.youtube_url, 1000)}\n【固有名詞の正本】${identity}\n文字起こしに異なる漢字・表記があっても無視し、会社名・役職・氏名は必ず正本と一字一句同じにしてください。番組名は必ず「A TRUTH STORY」です。\n文字起こし: ${text(row.transcript, 90000)}\nJSONだけを返してください。キーは heading,html,imagePrompt,altText。htmlはp,h3,ul,ol,blockquote,strong,aのみを使ってください。imagePromptには対象H2に対応する動画内の実際の対談場面として望ましい話題と人物を簡潔に書いてください。出力前に誤字脱字、英語スペル、固有名詞を校正してください。`;
-  const generated = await claudeJson(apiKey, prompt),
-    value = generated.value;
+  const generated = await retry(async () => {
+    const result = await claudeJson(apiKey, prompt);
+    if (typeof result.value.html !== "string" || !sanitizeArticleHtml(result.value.html))
+      throw new Error("AIが本文を生成できませんでした。元の本文は保持されています。");
+    return result;
+  }, 2), value = generated.value;
   return {
     heading: text(value.heading, 160) || heading,
     html: sanitizeArticleHtml(value.html),
@@ -1851,6 +1963,7 @@ export async function createUnifiedProduction(
       direction,
       transcript,
       articleCount,
+      request,
     ),
     anthropicKey = await getAnthropicApiKey();
   if (!anthropicKey)
@@ -1864,6 +1977,8 @@ export async function createUnifiedProduction(
     );
   if (wordpress && !categoryId)
     throw new Error("WordPressの投稿カテゴリーを選択してください。");
+  if (categoryId && !wordpress)
+    throw new Error("選択したカテゴリーへ保存できません。WordPress連携を確認してから再実行してください。");
   type ResumeRow = {
     id: string;
     title: string;
@@ -1981,7 +2096,7 @@ export async function createUnifiedProduction(
     })),
   );
   try {
-    const completed = await Promise.all(
+    const completed = await settleProductionBatch(
       Array.from(
         { length: articleCount - resumeRows.length },
         async (_, offset) => {
@@ -2000,6 +2115,7 @@ export async function createUnifiedProduction(
                   direction,
                   keywords: keywords.keywords,
                   provider: keywords.provider,
+                  keywordEvidence: keywords.evidence,
                   challengerCompany,
                   challengerRole,
                   challengerName,
@@ -2145,6 +2261,11 @@ export async function createUnifiedProduction(
             throw new Error(
               `「${generated.title}」のWordPress下書きURLを取得できませんでした。`,
             );
+          // Save the existing draft identity before requesting an optional
+          // sharing link, so a preview failure cannot orphan the draft.
+          await runtime().DB.prepare(
+            "UPDATE articles SET body_html=?,featured_image_url=?,section_images_json=?,wordpress_post_id=?,wordpress_edit_url=?,wordpress_preview_url=?,wordpress_status='DRAFT',updated_at=? WHERE id=?",
+          ).bind(posted.html, posted.featuredUrl, JSON.stringify(posted.uploadedUrls.slice(1)), posted.postId, posted.editUrl, posted.previewUrl, now(), articleId).run();
           wordpressPublicPreviewUrl = await retry(
             () => enableWordPressPublicPreview(wordpress, posted.postId),
             3,

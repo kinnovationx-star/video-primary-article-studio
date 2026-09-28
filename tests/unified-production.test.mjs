@@ -40,46 +40,37 @@ test("article library includes the SEO LOOP style visual editor", async () => {
   assert.match(source, /WordPressと同じ見た目で、直接編集できます/);
   assert.match(source, /このH2を編集/);
   assert.match(source, /SEO設定（タイトルタグ・URL末尾・説明文・キーワード）/);
-  assert.match(source, /変更を保存してプレビューへ反映/);
-  assert.match(source, /`articles\/\$\{item\.id\}`[\s\S]*"PATCH"/);
+  assert.match(source, /変更を保存/);
+  assert.match(source, /`articles\/\$\{item\.id\}`, "PATCH"/);
 });
 
-test("generated article cards stay below the studio form and expose AI editing", async () => {
+test("generated article cards stay below the studio form and expose Claude / ChatGPT editing", async () => {
   const source = await readFile(new URL("app/seo-loop-app.tsx", root), "utf8");
   assert.match(source, /<Library[\s\S]*embedded/);
-  assert.match(source, /このH2本文をAIで再生成/);
-  assert.match(source, /このH2画像を動画から再取得/);
-  assert.match(source, /アイキャッチ画像をAIで再生成/);
-  assert.match(source, /WordPress下書きを閲覧/);
+  assert.match(source, /このH2本文をClaudeで書き直す/);
+  assert.match(source, /この時刻の場面を動画から切り出す/);
+  assert.match(source, /アイキャッチ画像を作り直す/);
+  assert.match(source, /WordPressへ下書き保存/);
+  assert.match(source, /provider: "claude"/);
+  assert.match(source, /provider: "gpt"/);
 });
 
-test("article regeneration APIs and WordPress preview URL are persisted", async () => {
+test("WordPress drafts get a public preview URL shown on every card", async () => {
   const route = await readFile(new URL("app/api/[[...path]]/route.ts", root), "utf8");
   const production = await readFile(new URL("lib/unified-production.ts", root), "utf8");
-  const migration = await readFile(new URL("migrations/0007_article_editing_and_preview.sql", root), "utf8");
-  assert.match(route, /regenerate-section/);
-  assert.match(route, /regenerate-image/);
-  assert.match(production, /preview=true/);
-  assert.match(migration, /wordpress_preview_url/);
-});
-
-test("WordPress public preview is enabled and its external URL is shown on every card", async () => {
-  const route = await readFile(new URL("app/api/[[...path]]/route.ts", root), "utf8");
-  const production = await readFile(new URL("lib/unified-production.ts", root), "utf8");
+  const browser = await readFile(new URL("lib/browser-production.ts", root), "utf8");
   const studio = await readFile(new URL("app/seo-loop-app.tsx", root), "utf8");
-  const migration = await readFile(new URL("migrations/0011_wordpress_public_preview.sql", root), "utf8");
-
-  assert.match(production, /public_post_preview/);
   assert.match(production, /DS_Public_Post_Preview::get_preview_link/);
   assert.match(production, /video-primary-article\/v1\/public-preview/);
-  assert.match(production, /wordpress_public_preview_url/);
-  assert.match(production, /enableWordPressPublicPreview/);
+  assert.match(browser, /enableWordPressPublicPreview/);
+  assert.match(browser, /wordpress_public_preview_url/);
+  assert.match(browser, /featured_media/);
+  assert.match(browser, /youtube-video-link/);
+  assert.match(browser, /この動画をYouTubeで見る/);
+  assert.match(route, /path\[2\] === "wordpress"/);
   assert.match(route, /wordpress\/public-previews\/backfill/);
-  assert.match(route, /backfillWordPressPublicPreviews/);
-  assert.match(migration, /wordpress_public_preview_url/);
   assert.match(studio, /外部確認URL/);
-  assert.match(studio, /wordpressPublicPreviewUrl/);
-  assert.match(studio, /\{wordpressPublicPreviewUrl\}/);
+  assert.match(studio, /wordpress_public_preview_url/);
 });
 
 test("video frames and GPT Image 2 create sharp 16:9 editorial visuals", async () => {
@@ -102,79 +93,38 @@ test("video frames and GPT Image 2 create sharp 16:9 editorial visuals", async (
   assert.match(styles, /max-width: 620px/);
 });
 
-test("YouTube frames, canonical cast fields, PART 1-5, and end-video links are wired end to end", async () => {
+test("YouTube details, canonical cast fields and PART numbers are wired end to end", async () => {
   const studio = await readFile(new URL("app/seo-loop-app.tsx", root), "utf8");
-  const production = await readFile(new URL("lib/unified-production.ts", root), "utf8");
+  const pipeline = await readFile(new URL("lib/browser-pipeline.ts", root), "utf8");
   const route = await readFile(new URL("app/api/[[...path]]/route.ts", root), "utf8");
-  const migration = await readFile(new URL("migrations/0008_youtube_metadata_and_cast.sql", root), "utf8");
-
-  for (const field of [
-    "challenger_company",
-    "challenger_role",
-    "challenger_name",
-    "challenger_image_key",
-    "special_guest",
-    "mc_name",
-    "youtube_description",
-    "youtube_chapters",
-  ]) assert.match(studio, new RegExp(`name=["']${field}["']`));
+  for (const field of ["challenger_company", "challenger_role", "challenger_name", "special_guest", "mc_name", "youtube_description", "youtube_chapters", "wordpress_category_id"])
+    assert.match(studio, new RegExp(`name=["']${field}["']`));
   assert.match(studio, /youtube\/metadata\?url=/);
   assert.match(route, /youtube\/metadata/);
-  assert.match(production, /youtube\/v3\/videos\?part=snippet/);
-  assert.match(production, /i\.ytimg\.com\/vi/);
-  assert.match(production, /v1\/images\/edits/);
-  assert.match(production, /image\[\]/);
-  assert.match(production, /quality", "high"/);
-  assert.match(production, /固有名詞の正本/);
-  assert.match(production, /文字起こし由来の別表記/);
-  assert.match(production, /runtime\(\)\.IMAGES/);
-  assert.match(production, /image\/svg\+xml/);
-  assert.match(production, /youtube-video-link/);
-  assert.match(production, /この動画をYouTubeで見る/);
-  assert.match(production, /A TRUTH STORY/);
-  assert.match(production, /PART \$\{source\.articleIndex \+ 1\}/);
-  assert.match(production, /Math\.min\(5, Math\.max\(1/);
-  assert.match(migration, /youtube_description/);
-  assert.match(migration, /youtube_chapters/);
-  assert.match(migration, /challenger_role/);
+  assert.match(route, /youtube" && path\[1\] === "frame"/);
+  assert.match(pipeline, /A TRUTH STORY/);
+  assert.match(pipeline, /PART \$\{articleNumber\}/);
+  assert.match(pipeline, /Math\.min\(5, Math\.max\(1/);
 });
 
-test("challenger reference image is required and stored independently", async () => {
+test("challenger reference image is stored and attached to every ChatGPT image request", async () => {
   const studio = await readFile(new URL("app/seo-loop-app.tsx", root), "utf8");
-  const production = await readFile(new URL("lib/unified-production.ts", root), "utf8");
   const route = await readFile(new URL("app/api/[[...path]]/route.ts", root), "utf8");
-  const migration = await readFile(new URL("migrations/0010_challenger_reference_image.sql", root), "utf8");
-
+  const pipeline = await readFile(new URL("lib/browser-pipeline.ts", root), "utf8");
   assert.match(studio, /挑戦者本人の参照画像/);
   assert.match(studio, /accept="image\/jpeg,image\/png,image\/webp"/);
-  assert.match(studio, /アイキャッチと全H2画像を高画質で作り直す/);
-  assert.match(studio, /regenerateAllImages/);
+  assert.match(studio, /アイキャッチと全H2画像を作り直す/);
   assert.match(route, /route === "challenger-reference"/);
   assert.match(route, /challenger-references\//);
-  assert.match(route, /UPDATE production_projects SET challenger_image_key=/);
-  assert.match(production, /challengerReferenceImage/);
-  assert.match(production, /画像2は挑戦者本人の参照写真/);
-  assert.match(migration, /challenger_image_key/);
+  assert.match(pipeline, /添付1枚目は挑戦者/);
+  assert.match(studio, /captureFrames/);
 });
 
-test("article batches become visible only after every article, image, and WordPress URL is complete", async () => {
+test("progress reaches 100% only after articles, images and WordPress drafts are all done", async () => {
   const studio = await readFile(new URL("app/seo-loop-app.tsx", root), "utf8");
-  const production = await readFile(new URL("lib/unified-production.ts", root), "utf8");
-  const route = await readFile(new URL("app/api/[[...path]]/route.ts", root), "utf8");
-  const migration = await readFile(new URL("migrations/0009_atomic_article_batches.sql", root), "utf8");
-
-  assert.match(production, /Promise\.all\(/);
-  assert.match(production, /imageResult\.images\.length !== imageCount/);
-  assert.match(production, /WordPress下書きURLを取得できませんでした/);
-  assert.match(production, /UPDATE articles SET batch_ready=1 WHERE project_id=/);
-  assert.match(production, /status='GENERATING' ORDER BY created_at DESC LIMIT 1/);
-  assert.match(production, /articleCount - resumeRows\.length/);
-  assert.match(route, /WHERE batch_ready=1 ORDER BY updated_at DESC/);
-  assert.match(migration, /batch_ready INTEGER NOT NULL DEFAULT 1/);
-  assert.match(studio, /visibleCreated\.length !== requestedCount/);
-  assert.match(studio, /外部確認URL/);
-  assert.match(studio, /WordPress外部確認URL発行・記事カード反映がすべて完了/);
-  assert.match(studio, /通信を自動再接続しています/);
-  assert.match(studio, /project_id === project\.id/);
-  assert.match(studio, /Date\.parse\(item\.created_at\) >= submittedAt - 60_000/);
+  assert.match(studio, /Math\.min\(99, percent\)/);
+  assert.match(studio, /percent: 100, detail, status: "completed"/);
+  assert.match(studio, /pipeline\.phase = "done"/);
+  assert.match(studio, /PIPELINE_KEY/);
+  assert.match(studio, /制作を再開/);
 });

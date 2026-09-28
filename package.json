@@ -6,11 +6,13 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "prebuild": "node scripts/package-browser-extension.mjs",
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
     "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "test": "node --test tests/*.test.mjs",
-    "lint": "eslint app/seo-loop-app.tsx app/layout.tsx app/page.tsx app/api/[[...path]]/route.ts lib/studio-server.ts lib/studio-connections.ts lib/integrations.ts lib/unified-production.ts lib/automated-seo-report.ts cloud-runner/src/full.ts",
+    "test:browser": "node --test tests/browser-mode.test.mjs tests/browser-extension.test.mjs tests/production-response.test.mjs tests/face-quality.test.mjs",
+    "lint": "eslint lib/browser-pipeline.ts lib/browser-production.ts app/seo-loop-app.tsx app/layout.tsx app/page.tsx app/api/[[...path]]/route.ts lib/studio-server.ts lib/studio-connections.ts lib/integrations.ts lib/unified-production.ts lib/automated-seo-report.ts cloud-runner/src/full.ts",
     "typecheck:workers": "wrangler types worker-configuration.d.ts --config cloud-runner/wrangler.typecheck.jsonc && tsc --noEmit",
     "worker:dry-run": "wrangler deploy --dry-run --config cloud-runner/wrangler.typecheck.jsonc --outdir .wrangler/dry-run",
     "db:generate": "drizzle-kit generate"

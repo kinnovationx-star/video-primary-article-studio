@@ -51,3 +51,7 @@ yarn-error.log*
 /cloud-runner/dashboard-wrangler.jsonc
 /cloud-runner/direct-mcp-verify-wrangler.jsonc
 !cloud-runner/video-wrangler.jsonc
+/backups/
+
+# Built by scripts/package-browser-extension.mjs during `npm run build`
+/public/downloads/
